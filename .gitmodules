@@ -1,0 +1,3 @@
+[submodule "gcide"]
+	path = gcide
+	url = https://github.com/johncf/gcide.git

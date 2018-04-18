@@ -1,0 +1,23 @@
+[package]
+name = "gcide-parser"
+version = "0.1.0"
+authors = ["johncf <johncf@protonmail.com>"]
+
+[lib]
+name = "gcide"
+path = "src/lib.rs"
+
+[[bin]]
+name = "identity"
+path = "src/bin/identity.rs"
+required-features = ["binaries"]
+
+[features]
+default = ["binaries"]
+binaries = ["structopt"]
+
+[dependencies]
+nom = "4.0.0-beta3"
+
+encoding = { version = "0.2", optional = true }
+structopt = { version = "0.2", optional = true }
