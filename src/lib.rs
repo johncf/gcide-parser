@@ -10,7 +10,7 @@ pub mod parser;
 pub use parser::Parser;
 
 pub fn read_file<P: AsRef<Path>>(path: P) -> Result<String, Error> {
-    let mut contents = String::with_capacity(2 << 20);
-    File::open(path)?.read_to_string(&mut contents)?;
-    Ok(contents)
+    let mut contents = Vec::with_capacity(2 << 20);
+    File::open(path)?.read_to_end(&mut contents)?;
+    Ok(String::from_utf8_lossy(&contents).into_owned())
 }
