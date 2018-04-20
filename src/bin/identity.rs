@@ -19,11 +19,21 @@ fn patch(contents: &str, output: &Path) -> Result<(), std::io::Error> {
     use std::io::Write;
     let mut patched = String::with_capacity(contents.len());
     let mut block_iter = Parser::new(contents);
-    while let Some((skipped, block)) = block_iter.next() {
+    while let Some((skipped, block_res)) = block_iter.next() {
         use std::fmt::Write;
-        patched.push_str(skipped);
-        let block = block.unwrap();
-        write!(patched, "{}", block).unwrap();
+        if skipped.len() > 0 && skipped.starts_with("<--") {
+            if !skipped.starts_with("<-- This file is part ") {
+                patched.push('\n');
+            }
+            patched.push_str(skipped);
+            patched.push('\n');
+        }
+        match block_res {
+            Ok(block) => write!(patched, "{}", block).unwrap(),
+            Err(err) => {
+                write!(patched, "\n{}[ERROR->]{}\n", err.leading, err.trailing).unwrap();
+            }
+        }
     }
     patched.push_str(block_iter.remaining());
     std::fs::File::create(output)?.write_all(patched.as_bytes())
