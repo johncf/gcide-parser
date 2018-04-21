@@ -42,6 +42,7 @@ pub enum BlockItem<'a> {
 impl<'a> Display for BlockItem<'a> {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         use self::BlockItem::*;
+        let allowed_to_dangle = &["cs", "note", "usage"];
         match *self {
             Comment(text) => write!(f, "<--{}-->", text),
             Entity(name) => write!(f, "<{}/", name),
@@ -55,8 +56,16 @@ impl<'a> Display for BlockItem<'a> {
                 }
                 write!(f, "</{}>", name)
             }
-            UnpairedTagOpen(name) => write!(f, "<{}>", name),
-            UnpairedTagClose(name) => write!(f, "</{}>", name),
+            UnpairedTagOpen(name) => if allowed_to_dangle.contains(&name) {
+                write!(f, "<{}>", name)
+            } else {
+                write!(f, "<{}!!>", name)
+            }
+            UnpairedTagClose(name) => if allowed_to_dangle.contains(&name) {
+                write!(f, "</{}>", name)
+            } else {
+                write!(f, "</{}!!>", name)
+            }
         }
     }
 }
@@ -107,6 +116,7 @@ impl<'a> Parser<'a> {
 
 named!(block_start<&str, &str>, take_until!("<p>"));
 
+#[derive(Debug)]
 pub struct ParserError<'a> {
     pub leading: &'a str,
     pub trailing: &'a str,
@@ -148,14 +158,36 @@ impl<'a> Iterator for Parser<'a> {
     }
 }
 
-fn pair_up_items<'a>(mut items: Vec<BlockItem<'a>>) -> Vec<BlockItem<'a>> {
-    // TODO proccess to pair up tags
-    items
+fn pair_up_items<'a>(items: Vec<BlockItem<'a>>) -> Vec<BlockItem<'a>> {
+    use self::BlockItem::*;
+    let mut stack = Vec::with_capacity(items.len()*2/3 + 1);
+    for item in items {
+        match item {
+            UnpairedTagClose(name) => {
+                let mut matching_idx = None;
+                for (idx, stack_item) in stack.iter().enumerate().rev() {
+                    if *stack_item == UnpairedTagOpen(name) {
+                        matching_idx = Some(idx);
+                        break;
+                    }
+                }
+                if let Some(idx) = matching_idx {
+                    let tagged = Tagged(name, stack.drain(idx+1..).collect());
+                    stack[idx] = tagged;
+                } else {
+                    stack.push(item);
+                }
+            }
+            _ => stack.push(item),
+        }
+    }
+    stack
 }
 
 fn process_block_items<'a>(mut items: Vec<BlockItem<'a>>) -> Block<'a> {
     assert_eq!(items.remove(0), BlockItem::UnpairedTagOpen("p"));
     assert_eq!(items.pop(), Some(BlockItem::UnpairedTagClose("p")));
+    items = pair_up_items(items);
     // TODO take out sources
     Block {
         items: items,
@@ -166,18 +198,29 @@ fn process_block_items<'a>(mut items: Vec<BlockItem<'a>>) -> Block<'a> {
 #[cfg(test)]
 mod test {
     use super::Parser;
+
+    fn identity(input: &str) -> String {
+        use std::fmt::Write;
+        let mut block_iter = Parser::new(input);
+        let (skipped, block_res) = block_iter.next().expect("no block found!");
+        assert!(skipped.is_empty());
+        assert!(block_iter.remaining().is_empty());
+        let block = block_res.expect("bad block");
+        let mut output = String::new();
+        write!(output, "{}", block).unwrap();
+        output
+    }
+
     #[test]
     fn simple() {
         let block_str = "<p><ent>Q</ent><br/\n<hw>Q</hw> <pr>(k<umac/)</pr>, <def>the seventeenth letter of the English alphabet.</def><br/\n[<source>1913 Webster</source>]</p>";
-        let mut block_iter = Parser::new(block_str);
-        let mut output = String::new();
-        while let Some((skipped, block)) = block_iter.next() {
-            use std::fmt::Write;
-            assert!(skipped.is_empty());
-            let block = block.expect("bad block");
-            write!(output, "{}", block).unwrap();
-        }
-        assert!(block_iter.remaining().is_empty());
-        assert_eq!(block_str, output.trim());
+        assert_eq!(block_str, identity(block_str).trim());
+    }
+
+    #[test]
+    fn unpaired() {
+        let block_str = "<p><ent>Q</ent><br/\n<hw>Q</hw> <def>here are two <i>unpaired tags</b>.</def></p>";
+        let expected = "<p><ent>Q</ent><br/\n<hw>Q</hw> <def>here are two <i!!>unpaired tags</b!!>.</def></p>";
+        assert_eq!(expected, identity(block_str).trim());
     }
 }
