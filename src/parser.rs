@@ -32,6 +32,7 @@ pub enum BlockItem<'a> {
     Tagged(&'a str, Vec<BlockItem<'a>>),
     Comment(&'a str),
     Entity(&'a str),
+    EntityBr,
     EntityUnk,
     ExternalLink(&'a str, &'a str),
     Plain(&'a str),
@@ -47,6 +48,7 @@ impl<'a> Display for BlockItem<'a> {
         match *self {
             Comment(text) => write!(f, "<--{}-->", text),
             Entity(name) => write!(f, "<{}/", name),
+            EntityBr => write!(f, "<br/\n"),
             EntityUnk => write!(f, "<?/"),
             ExternalLink(url, text) => write!(f, "<a href=\"{}\">{}</a>", url, text),
             Plain(text) => write!(f, "{}", text),
@@ -88,6 +90,7 @@ named!(close_tag<CompleteStr, BlockItem>,
 
 named!(entity<CompleteStr, BlockItem>,
        alt!(map!(tag!("<?/"), |_| BlockItem::EntityUnk) |
+            map!(tuple!(tag!("<br/"), opt!(char!('\n'))), |_| BlockItem::EntityBr) |
             map!(delimited!(tag!("<"), alphanumeric1, tag!("/")), |s| BlockItem::Entity(s.0))));
 
 named!(comment<CompleteStr, BlockItem>,
