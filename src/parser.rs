@@ -210,17 +210,19 @@ fn process_block_items<'a>(mut items: Vec<BlockItem<'a>>) -> Block<'a> {
 
     let mut sources = Vec::new();
     if let Some(&Plain("]")) = items.last() {
-        if let Some(idx) = linear_search_rev(&items, &EntityBr) {
-            if let Some(&Plain("[")) = items.get(idx+1) {
-                if let Some(&Source(_)) = items.get(idx+2) {
-                    for item in &items[idx+2..] {
-                        match *item {
-                            Source(name) => sources.push(name),
-                            _ => (),
-                        }
+        let is_bracket_open = |item: &BlockItem| *item == Plain("[") || *item == Plain("\n[");
+        if let Some(idx) = linear_search_rev_by(&items, is_bracket_open) {
+            if let Some(&Source(_)) = items.get(idx+1) {
+                for item in &items[idx+1..] {
+                    match *item {
+                        Source(name) => sources.push(name),
+                        _ => (),
                     }
-                    items.drain(idx..);
                 }
+                match items[idx-1] {
+                    EntityBr => items.drain(idx-1..),
+                    _ => items.drain(idx..),
+                };
             }
         }
     }
@@ -232,8 +234,13 @@ fn process_block_items<'a>(mut items: Vec<BlockItem<'a>>) -> Block<'a> {
 }
 
 fn linear_search_rev<T: PartialEq>(haystack: &Vec<T>, needle: &T) -> Option<usize> {
+    linear_search_rev_by(haystack, |item| item == needle)
+}
+
+fn linear_search_rev_by<T, F>(haystack: &Vec<T>, is_needle: F) -> Option<usize>
+where T: PartialEq, F: Fn(&T) -> bool {
     for (idx, item) in haystack.iter().enumerate().rev() {
-        if item == needle {
+        if is_needle(item) {
             return Some(idx);
         }
     }
