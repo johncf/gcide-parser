@@ -11,7 +11,7 @@ pub struct Block<'a> {
 
 impl<'a> Display for Block<'a> {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        write!(f, "\n<p>")?;
+        write!(f, "<p>")?;
         for t in &self.items {
             write!(f, "{}", t)?;
         }
@@ -22,7 +22,7 @@ impl<'a> Display for Block<'a> {
             }
             write!(f, "<br/\n[{}]</p>\n", sources.join(" + "))
         } else {
-            write!(f, "</p>\n")
+            write!(f, "</p>")
         }
     }
 }
@@ -59,12 +59,12 @@ impl<'a> Display for BlockItem<'a> {
             UnpairedTagOpen(name) => if allowed_to_dangle.contains(&name) {
                 write!(f, "<{}>", name)
             } else {
-                write!(f, "<{}!!>", name)
+                write!(f, "[ERROR->]<{}>", name)
             }
             UnpairedTagClose(name) => if allowed_to_dangle.contains(&name) {
                 write!(f, "</{}>", name)
             } else {
-                write!(f, "</{}!!>", name)
+                write!(f, "[ERROR->]</{}>", name)
             }
         }
     }
@@ -116,12 +116,6 @@ impl<'a> Parser<'a> {
 
 named!(block_start<&str, &str>, take_until!("<p>"));
 
-#[derive(Debug)]
-pub struct ParserError<'a> {
-    pub leading: &'a str,
-    pub trailing: &'a str,
-}
-
 impl<'a> Iterator for Parser<'a> {
     type Item = (&'a str, Result<Block<'a>, ParserError<'a>>);
 
@@ -155,6 +149,18 @@ impl<'a> Iterator for Parser<'a> {
         } else {
             None
         }
+    }
+}
+
+#[derive(Debug)]
+pub struct ParserError<'a> {
+    pub leading: &'a str,
+    pub trailing: &'a str,
+}
+
+impl<'a> Display for ParserError<'a> {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        write!(f, "{}[ERROR->]{}", self.leading, self.trailing)
     }
 }
 
@@ -214,13 +220,13 @@ mod test {
     #[test]
     fn simple() {
         let block_str = "<p><ent>Q</ent><br/\n<hw>Q</hw> <pr>(k<umac/)</pr>, <def>the seventeenth letter of the English alphabet.</def><br/\n[<source>1913 Webster</source>]</p>";
-        assert_eq!(block_str, identity(block_str).trim());
+        assert_eq!(block_str, identity(block_str));
     }
 
     #[test]
     fn unpaired() {
         let block_str = "<p><ent>Q</ent><br/\n<hw>Q</hw> <def>here are two <i>unpaired tags</b>.</def></p>";
-        let expected = "<p><ent>Q</ent><br/\n<hw>Q</hw> <def>here are two <i!!>unpaired tags</b!!>.</def></p>";
-        assert_eq!(expected, identity(block_str).trim());
+        let expected = "<p><ent>Q</ent><br/\n<hw>Q</hw> <def>here are two [ERROR->]<i>unpaired tags[ERROR->]</b>.</def></p>";
+        assert_eq!(expected, identity(block_str));
     }
 }

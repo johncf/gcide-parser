@@ -29,10 +29,9 @@ fn patch(contents: &str, output: &Path) -> Result<(), std::io::Error> {
             patched.push('\n');
         }
         match block_res {
-            Ok(block) => write!(patched, "{}", block).unwrap(),
-            Err(err) => {
-                write!(patched, "\n{}[ERROR->]{}\n", err.leading, err.trailing).unwrap();
-            }
+            Ok(block) => write!(patched, "\n{}\n", block).unwrap(),
+            Err(err) => write!(patched, "\n{}\n", err).unwrap(),
+
         }
     }
     patched.push_str(block_iter.remaining());
