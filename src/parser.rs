@@ -20,7 +20,7 @@ impl<'a> Display for Block<'a> {
             for s in &self.sources {
                 sources.push(format!("<source>{}</source>", s));
             }
-            write!(f, "<br/\n[{}]</p>\n", sources.join(" + "))
+            write!(f, "<br/\n[{}]</p>", sources.join(" + "))
         } else {
             write!(f, "</p>")
         }
@@ -172,20 +172,11 @@ impl<'a> Display for ParserError<'a> {
 fn pair_up_items<'a>(items: Vec<BlockItem<'a>>) -> Vec<BlockItem<'a>> {
     use self::BlockItem::*;
 
-    fn linear_search<T: PartialEq>(haystack: &Vec<T>, needle: &T) -> Option<usize> {
-        for (idx, item) in haystack.iter().enumerate().rev() {
-            if item == needle {
-                return Some(idx);
-            }
-        }
-        return None;
-    }
-
     let mut stack = Vec::with_capacity(items.len()*2/3 + 1);
     for item in items {
         match item {
             UnpairedTagClose(name) => {
-                if let Some(open_idx) = linear_search(&stack, &UnpairedTagOpen(name)) {
+                if let Some(open_idx) = linear_search_rev(&stack, &UnpairedTagOpen(name)) {
                     if name == "source" {
                         if open_idx == stack.len() - 2 {
                             if let Some(Plain(text)) = stack.pop() {
@@ -210,14 +201,43 @@ fn pair_up_items<'a>(items: Vec<BlockItem<'a>>) -> Vec<BlockItem<'a>> {
 }
 
 fn process_block_items<'a>(mut items: Vec<BlockItem<'a>>) -> Block<'a> {
-    assert_eq!(items.remove(0), BlockItem::UnpairedTagOpen("p"));
-    assert_eq!(items.pop(), Some(BlockItem::UnpairedTagClose("p")));
+    use self::BlockItem::*;
+
+    assert_eq!(items.remove(0), UnpairedTagOpen("p"));
+    assert_eq!(items.pop(), Some(UnpairedTagClose("p")));
+
     items = pair_up_items(items);
-    // TODO take out sources
+
+    let mut sources = Vec::new();
+    if let Some(&Plain("]")) = items.last() {
+        if let Some(idx) = linear_search_rev(&items, &EntityBr) {
+            if let Some(&Plain("[")) = items.get(idx+1) {
+                if let Some(&Source(_)) = items.get(idx+2) {
+                    for item in &items[idx+2..] {
+                        match *item {
+                            Source(name) => sources.push(name),
+                            _ => (),
+                        }
+                    }
+                    items.drain(idx..);
+                }
+            }
+        }
+    }
+
     Block {
         items: items,
-        sources: Vec::new(),
+        sources: sources,
     }
+}
+
+fn linear_search_rev<T: PartialEq>(haystack: &Vec<T>, needle: &T) -> Option<usize> {
+    for (idx, item) in haystack.iter().enumerate().rev() {
+        if item == needle {
+            return Some(idx);
+        }
+    }
+    return None;
 }
 
 #[cfg(test)]
