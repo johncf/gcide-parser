@@ -35,6 +35,7 @@ pub enum BlockItem<'a> {
     EntityUnk,
     ExternalLink(&'a str, &'a str),
     Plain(&'a str),
+    Source(&'a str),
     UnpairedTagOpen(&'a str),
     UnpairedTagClose(&'a str),
 }
@@ -49,6 +50,7 @@ impl<'a> Display for BlockItem<'a> {
             EntityUnk => write!(f, "<?/"),
             ExternalLink(url, text) => write!(f, "<a href=\"{}\">{}</a>", url, text),
             Plain(text) => write!(f, "{}", text),
+            Source(text) => write!(f, "[ERROR->]<source>{}</source>", text),
             Tagged(name, ref items) => {
                 write!(f, "<{}>", name)?;
                 for item in items {
@@ -166,20 +168,34 @@ impl<'a> Display for ParserError<'a> {
 
 fn pair_up_items<'a>(items: Vec<BlockItem<'a>>) -> Vec<BlockItem<'a>> {
     use self::BlockItem::*;
+
+    fn linear_search<T: PartialEq>(haystack: &Vec<T>, needle: &T) -> Option<usize> {
+        for (idx, item) in haystack.iter().enumerate().rev() {
+            if item == needle {
+                return Some(idx);
+            }
+        }
+        return None;
+    }
+
     let mut stack = Vec::with_capacity(items.len()*2/3 + 1);
     for item in items {
         match item {
             UnpairedTagClose(name) => {
-                let mut matching_idx = None;
-                for (idx, stack_item) in stack.iter().enumerate().rev() {
-                    if *stack_item == UnpairedTagOpen(name) {
-                        matching_idx = Some(idx);
-                        break;
+                if let Some(open_idx) = linear_search(&stack, &UnpairedTagOpen(name)) {
+                    if name == "source" {
+                        if open_idx == stack.len() - 2 {
+                            if let Some(Plain(text)) = stack.pop() {
+                                stack[open_idx] = Source(text);
+                                continue;
+                            }
+                        }
+                        stack.drain(open_idx+1..);
+                        stack[open_idx] = Source("[ERROR->]plaintext");
+                    } else {
+                        let tagged = Tagged(name, stack.drain(open_idx+1..).collect());
+                        stack[open_idx] = tagged;
                     }
-                }
-                if let Some(idx) = matching_idx {
-                    let tagged = Tagged(name, stack.drain(idx+1..).collect());
-                    stack[idx] = tagged;
                 } else {
                     stack.push(item);
                 }
@@ -221,6 +237,20 @@ mod test {
     fn simple() {
         let block_str = "<p><ent>Q</ent><br/\n<hw>Q</hw> <pr>(k<umac/)</pr>, <def>the seventeenth letter of the English alphabet.</def><br/\n[<source>1913 Webster</source>]</p>";
         assert_eq!(block_str, identity(block_str));
+    }
+
+    #[test]
+    fn source_misplaced() {
+        let block_str = "<p><ent>Q</ent><br/\n<hw>Q</hw> <pr>(k<umac/)</pr>, <def>the seventeenth letter of the English alphabet.</def><source>1913 Webster</source></p>";
+        let expected = "<p><ent>Q</ent><br/\n<hw>Q</hw> <pr>(k<umac/)</pr>, <def>the seventeenth letter of the English alphabet.</def>[ERROR->]<source>1913 Webster</source></p>";
+        assert_eq!(expected, identity(block_str));
+    }
+
+    #[test]
+    fn source_nonplain() {
+        let block_str = "<p><ent>Q</ent><br/\n<hw>Q</hw> <pr>(k<umac/)</pr>, <def>the seventeenth letter of the English alphabet.</def><br/\n[<source>Am<oe/ba</source>]</p>";
+        let expected = "<p><ent>Q</ent><br/\n<hw>Q</hw> <pr>(k<umac/)</pr>, <def>the seventeenth letter of the English alphabet.</def><br/\n[<source>[ERROR->]plaintext</source>]</p>";
+        assert_eq!(expected, identity(block_str));
     }
 
     #[test]
