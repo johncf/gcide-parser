@@ -44,7 +44,7 @@ pub enum BlockItem<'a> {
 impl<'a> Display for BlockItem<'a> {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         use self::BlockItem::*;
-        let allowed_to_dangle = &["cs", "note", "usage"];
+        let allowed_to_dangle = &["collapse", "cs", "note", "usage"];
         match *self {
             Comment(text) => write!(f, "<--{}-->", text),
             Entity(name) => write!(f, "<{}/", name),
