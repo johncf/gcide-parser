@@ -187,6 +187,14 @@ fn pair_up_items<'a>(items: Vec<BlockItem<'a>>) -> Vec<BlockItem<'a>> {
                         stack.drain(open_idx+1..);
                         stack[open_idx] = Source("[ERROR->]plaintext");
                     } else {
+                        if name == "col" && open_idx == stack.len() - 2 {
+                            if let Some(&Tagged("b", _)) = stack.last() {
+                                if let Some(Tagged("b", col_items)) = stack.pop() {
+                                    stack[open_idx] = Tagged("col", col_items);
+                                    continue;
+                                }
+                            }
+                        }
                         let tagged = Tagged(name, stack.drain(open_idx+1..).collect());
                         stack[open_idx] = tagged;
                     }
