@@ -1,22 +1,8 @@
 extern crate gcide;
 
-#[macro_use]
-extern crate structopt;
+use gcide::{binutils, Parser};
 
-use gcide::Parser;
-use std::path::{Path, PathBuf};
-use structopt::StructOpt;
-
-#[derive(StructOpt, Debug)]
-struct Opt {
-    #[structopt(name = "INFILE", help = "GNU CIDE file", parse(from_os_str))]
-    input: PathBuf,
-    #[structopt(name = "OUTFILE", help = "output file (default: overwrite)", parse(from_os_str))]
-    output: Option<PathBuf>,
-}
-
-fn patch(contents: &str, output: &Path) -> Result<(), std::io::Error> {
-    use std::io::Write;
+fn patch(contents: &str) -> String {
     let mut patched = String::with_capacity(contents.len());
     let mut block_iter = Parser::new(contents);
     while let Some((skipped, block_res)) = block_iter.next() {
@@ -31,16 +17,12 @@ fn patch(contents: &str, output: &Path) -> Result<(), std::io::Error> {
         match block_res {
             Ok(block) => write!(patched, "\n{}\n", block).unwrap(),
             Err(err) => write!(patched, "\n{}\n", err).unwrap(),
-
         }
     }
     patched.push_str(block_iter.remaining());
-    std::fs::File::create(output)?.write_all(patched.as_bytes())
+    patched
 }
 
 fn main() {
-    let opt = Opt::from_args();
-    let output = opt.output.as_ref().unwrap_or(&opt.input);
-    let contents = gcide::read_file(&opt.input).unwrap();
-    patch(&contents, &output).unwrap();
+    binutils::patch_using(patch);
 }
