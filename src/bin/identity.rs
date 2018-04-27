@@ -5,14 +5,13 @@ use gcide::{binutils, Parser};
 fn patch(contents: &str) -> String {
     let mut patched = String::with_capacity(contents.len());
     let mut block_iter = Parser::new(contents);
+    let mut first = true;
     while let Some((skipped, block_res)) = block_iter.next() {
         use std::fmt::Write;
-        if skipped.len() > 0 && skipped.starts_with("<--") {
-            if !skipped.starts_with("<-- This file is part ") {
-                patched.push('\n');
-            }
+        if first && skipped.starts_with("<-- This file is part ") {
             patched.push_str(skipped);
             patched.push('\n');
+            first = false;
         }
         match block_res {
             Ok(block) => write!(patched, "\n{}\n", block).unwrap(),
