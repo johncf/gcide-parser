@@ -114,6 +114,14 @@ impl<'a> Parser<'a> {
         Parser { contents }
     }
 
+    pub fn get_preface(&self) -> Option<&'a str> {
+        if self.contents.starts_with("<-- This file is part") {
+            self.contents.find("-->").map(|i| &self.contents[..i + 3])
+        } else {
+            None
+        }
+    }
+
     pub fn remaining(&self) -> &'a str {
         self.contents.trim()
     }
@@ -122,17 +130,17 @@ impl<'a> Parser<'a> {
 named!(block_start<&str, &str>, take_until!("<p>"));
 
 impl<'a> Iterator for Parser<'a> {
-    type Item = (&'a str, Result<Block<'a>, ParserError<'a>>);
+    type Item = Result<Block<'a>, ParserError<'a>>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if let Ok((remaining, skipped)) = block_start(self.contents) {
+        if let Ok((remaining, _)) = block_start(self.contents) {
             let end_idx_opt = remaining.find("</p>");
             if end_idx_opt.is_none() {
                 self.contents = "";
-                return Some((skipped, Err(ParserError {
+                return Some(Err(ParserError {
                     leading: &remaining[..0],
                     trailing: remaining,
-                })));
+                }));
             }
             let end_idx = end_idx_opt.unwrap() + 4;
             let block_str = &remaining[..end_idx];
@@ -141,12 +149,12 @@ impl<'a> Iterator for Parser<'a> {
                 Ok((unparsed, items)) => {
                     if unparsed.len() > 0 {
                         let lead_len = block_str.len() - unparsed.len();
-                        Some((skipped.trim(), Err(ParserError {
+                        Some(Err(ParserError {
                             leading: &block_str[..lead_len],
                             trailing: unparsed.0,
-                        })))
+                        }))
                     } else {
-                        Some((skipped.trim(), Ok(process_block_items(items))))
+                        Some(Ok(process_block_items(items)))
                     }
                 }
                 Err(_) => unreachable!(),
