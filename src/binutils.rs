@@ -24,8 +24,8 @@ where F: Fn(&str) -> String {
     let opt = BasicOpt::from_args();
     let output = opt.output.as_ref().unwrap_or(&opt.input);
     let contents = read_file(&opt.input).unwrap_abort();
-    let mut output_file = File::create(output).unwrap_abort();
     let patched = patcher(&contents);
+    let mut output_file = File::create(output).unwrap_abort();
     output_file.write_all(patched.as_bytes()).unwrap_abort();
 }
 
