@@ -165,7 +165,7 @@ impl<'a> Iterator for Parser<'a> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct ParserError<'a> {
     pub leading: &'a str,
     pub trailing: &'a str,
@@ -174,6 +174,124 @@ pub struct ParserError<'a> {
 impl<'a> Display for ParserError<'a> {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         write!(f, "{}[ERROR->]{}", self.leading, self.trailing)
+    }
+}
+
+pub struct Entry<'a> {
+    pub main_word: &'a str,
+    pub blocks: Vec<Block<'a>>,
+}
+
+pub struct EntryBuilder<'a> {
+    parser: Parser<'a>,
+    block_buffer: Option<Result<Block<'a>, ParserError<'a>>>,
+}
+
+impl<'a> EntryBuilder<'a> {
+    pub fn new(contents: &'a str) -> EntryBuilder<'a> {
+        EntryBuilder { parser: Parser { contents }, block_buffer: None }
+    }
+
+    pub fn get_preface(&self) -> Option<&'a str> {
+        self.parser.get_preface()
+    }
+
+    pub fn remaining(&self) -> &'a str {
+        self.parser.remaining()
+    }
+}
+
+impl<'a> Iterator for EntryBuilder<'a> {
+    type Item = Result<Entry<'a>, BuilderError<'a>>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        use self::BlockItem::*;
+
+        let main_word;
+        let mut blocks = Vec::new();
+        let next_block = self.block_buffer.take().or_else(|| self.parser.next());
+        match next_block {
+            Some(Ok(mut block)) => {
+                let mut last_ent = None;
+                let mut bad_block = false;
+                for (idx, item) in block.items.iter().enumerate() {
+                    match *item {
+                        Tagged("ent", ref ent_items) => {
+                            if ent_items.len() == 1 {
+                                if let Plain(text) = ent_items[0] {
+                                    last_ent = Some((idx, text));
+                                    continue;
+                                }
+                            }
+                            bad_block = true;
+                            break;
+                        }
+                        EntityBr => continue,
+                        _ => break,
+                    }
+                }
+                if bad_block {
+                    return Some(Err(BuilderError::BadBlock(block)));
+                }
+                match last_ent {
+                    Some((ent_idx, ent_text)) => {
+                        if let EntityBr = block.items[ent_idx+1] {
+                            block.items.drain(..ent_idx+2);
+                        } else {
+                            block.items.drain(..ent_idx+1);
+                        }
+                        blocks.push(block);
+                        main_word = ent_text;
+                    }
+                    None => return Some(Err(BuilderError::BadBlock(block)))
+                }
+            }
+            Some(Err(err)) => return Some(Err(BuilderError::FromParser(err))),
+            None => return None,
+        }
+        while let Some(block_res) = self.parser.next() {
+            match block_res {
+                Ok(block) => {
+                    if let Tagged("ent", _) = block.items[0] {
+                        self.block_buffer = Some(Ok(block));
+                        break;
+                    } else {
+                        blocks.push(block);
+                    }
+                }
+                Err(err) => {
+                    self.block_buffer = Some(Err(err));
+                    break;
+                }
+            }
+        }
+        Some(Ok(Entry { main_word, blocks }))
+    }
+}
+
+impl<'a> Display for Entry<'a> {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        write!(f, "<entry main-word=\"{}\">", self.main_word)?;
+        for b in &self.blocks {
+            write!(f, "\n{}\n", b)?;
+        }
+        write!(f, "</entry>")
+    }
+}
+
+#[derive(Debug)]
+pub enum BuilderError<'a> {
+    FromParser(ParserError<'a>),
+    BadBlock(Block<'a>),
+}
+
+impl<'a> Display for BuilderError<'a> {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        use self::BuilderError::*;
+        match *self {
+            FromParser(parser_err) => parser_err.fmt(f),
+            BadBlock(ref block) => write!(f, "[ERROR->]{}", block),
+        }
     }
 }
 
@@ -270,8 +388,7 @@ mod test {
     fn identity(input: &str) -> String {
         use std::fmt::Write;
         let mut block_iter = Parser::new(input);
-        let (skipped, block_res) = block_iter.next().expect("no block found!");
-        assert!(skipped.is_empty());
+        let block_res = block_iter.next().expect("no block found!");
         assert!(block_iter.remaining().is_empty());
         let block = block_res.expect("bad block");
         let mut output = String::new();
@@ -281,28 +398,14 @@ mod test {
 
     #[test]
     fn simple() {
-        let block_str = "<p><ent>Q</ent><br/\n<hw>Q</hw> <pr>(k<umac/)</pr>, <def>the seventeenth letter of the English alphabet.</def><br/\n[<source>1913 Webster</source>]</p>";
+        let block_str = "<entry main-word=\"Q\">\n<p><hw>Q</hw> <pr>(k<umac/)</pr>, <def>the seventeenth letter of the English alphabet.</def><br/\n[<source>1913 Webster</source>]</p>\n</entry>";
         assert_eq!(block_str, identity(block_str));
     }
 
     #[test]
-    fn source_misplaced() {
-        let block_str = "<p><ent>Q</ent><br/\n<hw>Q</hw> <pr>(k<umac/)</pr>, <def>the seventeenth letter of the English alphabet.</def><source>1913 Webster</source></p>";
-        let expected = "<p><ent>Q</ent><br/\n<hw>Q</hw> <pr>(k<umac/)</pr>, <def>the seventeenth letter of the English alphabet.</def>[ERROR->]<source>1913 Webster</source></p>";
-        assert_eq!(expected, identity(block_str));
-    }
-
-    #[test]
-    fn source_nonplain() {
-        let block_str = "<p><ent>Q</ent><br/\n<hw>Q</hw> <pr>(k<umac/)</pr>, <def>the seventeenth letter of the English alphabet.</def><br/\n[<source>Am<oe/ba</source>]</p>";
-        let expected = "<p><ent>Q</ent><br/\n<hw>Q</hw> <pr>(k<umac/)</pr>, <def>the seventeenth letter of the English alphabet.</def><br/\n[<source>[ERROR->]plaintext</source>]</p>";
-        assert_eq!(expected, identity(block_str));
-    }
-
-    #[test]
     fn unpaired() {
-        let block_str = "<p><ent>Q</ent><br/\n<hw>Q</hw> <def>here are two <i>unpaired tags</b>.</def></p>";
-        let expected = "<p><ent>Q</ent><br/\n<hw>Q</hw> <def>here are two [ERROR->]<i>unpaired tags[ERROR->]</b>.</def></p>";
+        let block_str = "<entry main-word=\"Q\">\n<p><hw>Q</hw> <def>here are two <i>unpaired tags</b>.</def></p>\n</entry>";
+        let expected = "<entry main-word=\"Q\">\n<p><hw>Q</hw> <def>here are two [ERROR->]<i>unpaired tags[ERROR->]</b>.</def></p>\n</entry>";
         assert_eq!(expected, identity(block_str));
     }
 }

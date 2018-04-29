@@ -10,4 +10,4 @@ pub mod binutils;
 
 pub mod parser;
 
-pub use parser::Parser;
+pub use parser::{EntryBuilder, Parser};

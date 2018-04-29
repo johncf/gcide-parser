@@ -1,22 +1,22 @@
 extern crate gcide;
 
-use gcide::{binutils, Parser};
+use gcide::{binutils, EntryBuilder};
 
 fn patch(contents: &str) -> String {
     let mut patched = String::with_capacity(contents.len());
-    let mut block_iter = Parser::new(contents);
-    if let Some(preface) = block_iter.get_preface() {
+    let mut entry_iter = EntryBuilder::new(contents);
+    if let Some(preface) = entry_iter.get_preface() {
         patched.push_str(preface);
         patched.push('\n');
     }
-    while let Some(block_res) = block_iter.next() {
+    while let Some(entry_res) = entry_iter.next() {
         use std::fmt::Write;
-        match block_res {
-            Ok(block) => write!(patched, "\n{}\n", block).unwrap(),
+        match entry_res {
+            Ok(entry) => write!(patched, "\n{}\n", entry).unwrap(),
             Err(err) => write!(patched, "\n{}\n", err).unwrap(),
         }
     }
-    patched.push_str(block_iter.remaining());
+    patched.push_str(entry_iter.remaining());
     patched
 }
 
