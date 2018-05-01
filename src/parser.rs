@@ -1,7 +1,7 @@
 use std::fmt::{self, Display, Formatter};
 
 use nom::types::CompleteStr;
-use nom::alphanumeric1;
+use nom::{alphanumeric1, self};
 
 #[derive(Debug)]
 pub struct Block<'a> {
@@ -105,63 +105,50 @@ named!(ext_link<CompleteStr, BlockItem>,
            tag!("</a>") >>
            ( BlockItem::ExternalLink(url.0, text.0) )));
 
-pub struct Parser<'a> {
+struct BlockParser<'a> {
     contents: &'a str,
 }
 
-impl<'a> Parser<'a> {
-    pub fn new(contents: &'a str) -> Parser<'a> {
-        Parser { contents }
-    }
-
-    pub fn get_preface(&self) -> Option<&'a str> {
-        if self.contents.starts_with("<-- This file is part") {
-            self.contents.find("-->").map(|i| &self.contents[..i + 3])
-        } else {
-            None
-        }
-    }
-
-    pub fn remaining(&self) -> &'a str {
-        self.contents.trim()
+impl<'a> BlockParser<'a> {
+    fn new(contents: &'a str) -> BlockParser<'a> {
+        BlockParser { contents }
     }
 }
 
-named!(block_start<&str, &str>, take_until!("<p>"));
-
-impl<'a> Iterator for Parser<'a> {
+impl<'a> Iterator for BlockParser<'a> {
     type Item = Result<Block<'a>, ParserError<'a>>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if let Ok((remaining, _)) = block_start(self.contents) {
-            let end_idx_opt = remaining.find("</p>");
-            if end_idx_opt.is_none() {
-                self.contents = "";
-                return Some(Err(ParserError {
-                    leading: &remaining[..0],
-                    trailing: remaining,
-                }));
-            }
-            let end_idx = end_idx_opt.unwrap() + 4;
+        self.contents.find("<p>").map(|start_idx| {
+            let remaining = &self.contents[start_idx..];
+            let end_idx = match remaining.find("</p>") {
+                Some(i) => i + 4,
+                None => {
+                    self.contents = ""; // further parsing not possible
+                    return Err(ParserError {
+                        leading: "",
+                        trailing: remaining,
+                    });
+                }
+            };
             let block_str = &remaining[..end_idx];
             self.contents = &remaining[end_idx..];
             match parse_items(CompleteStr(block_str)) {
                 Ok((unparsed, items)) => {
                     if unparsed.len() > 0 {
+                        self.contents = ""; // further parsing not needed
                         let lead_len = block_str.len() - unparsed.len();
-                        Some(Err(ParserError {
+                        Err(ParserError {
                             leading: &block_str[..lead_len],
-                            trailing: unparsed.0,
-                        }))
+                            trailing: &remaining[lead_len..],
+                        })
                     } else {
-                        Some(Ok(process_block_items(items)))
+                        Ok(process_block_items(items))
                     }
                 }
                 Err(_) => unreachable!(),
             }
-        } else {
-            None
-        }
+        })
     }
 }
 
@@ -182,90 +169,83 @@ pub struct Entry<'a> {
     pub blocks: Vec<Block<'a>>,
 }
 
-pub struct EntryBuilder<'a> {
-    parser: Parser<'a>,
-    block_buffer: Option<Result<Block<'a>, ParserError<'a>>>,
+pub struct EntryParser<'a> {
+    contents: &'a str,
 }
 
-impl<'a> EntryBuilder<'a> {
-    pub fn new(contents: &'a str) -> EntryBuilder<'a> {
-        EntryBuilder { parser: Parser { contents }, block_buffer: None }
+impl<'a> EntryParser<'a> {
+    pub fn new(contents: &'a str) -> EntryParser<'a> {
+        EntryParser { contents }
     }
 
     pub fn get_preface(&self) -> Option<&'a str> {
-        self.parser.get_preface()
+        if self.contents.starts_with("<-- This file is part") {
+            self.contents.find("-->").map(|i| &self.contents[..i + 3])
+        } else {
+            None
+        }
     }
 
     pub fn remaining(&self) -> &'a str {
-        self.parser.remaining()
+        self.contents.trim()
     }
 }
 
-impl<'a> Iterator for EntryBuilder<'a> {
-    type Item = Result<Entry<'a>, BuilderError<'a>>;
+struct EntryHead<'a> {
+    main_word: &'a str,
+}
+
+named!(entry_head<&str, EntryHead>,
+       do_parse!(
+           tag!("<entry ") >>
+           main_word: delimited!(tag!("main-word=\""), is_not!("\""), tag!("\">\n")) >>
+           ( EntryHead { main_word } )));
+
+impl<'a> Iterator for EntryParser<'a> {
+    type Item = Result<Entry<'a>, ParserError<'a>>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        use self::BlockItem::*;
-
-        let main_word;
-        let mut blocks = Vec::new();
-        let next_block = self.block_buffer.take().or_else(|| self.parser.next());
-        match next_block {
-            Some(Ok(mut block)) => {
-                let mut last_ent = None;
-                let mut bad_block = false;
-                for (idx, item) in block.items.iter().enumerate() {
-                    match *item {
-                        Tagged("ent", ref ent_items) => {
-                            if ent_items.len() == 1 {
-                                if let Plain(text) = ent_items[0] {
-                                    last_ent = Some((idx, text));
-                                    continue;
-                                }
-                            }
-                            bad_block = true;
-                            break;
+        self.contents.find("<entry ").map(|start_idx| {
+            let remaining = &self.contents[start_idx..];
+            let end_idx = match remaining.find("</entry>") {
+                Some(i) => i,
+                None => {
+                    self.contents = ""; // further parsing not possible
+                    return Err(ParserError {
+                        leading: "",
+                        trailing: "",
+                    });
+                }
+            };
+            let close_len = "</entry>".len();
+            self.contents = &remaining[end_idx + close_len..];
+            match entry_head(&remaining[..end_idx]) {
+                Ok((block_str, EntryHead { main_word })) => {
+                    let mut blocks = Vec::new();
+                    for block_res in BlockParser::new(block_str) {
+                        match block_res {
+                            Ok(block) => blocks.push(block),
+                            Err(ParserError { trailing, .. }) => {
+                                let lead_len = end_idx + 1 - trailing.len();
+                                return Err(ParserError {
+                                    leading: &remaining[..lead_len],
+                                    trailing: &remaining[lead_len..end_idx + close_len],
+                                })
+                            },
                         }
-                        EntityBr => continue,
-                        _ => break,
                     }
+                    Ok(Entry { main_word, blocks })
                 }
-                if bad_block {
-                    return Some(Err(BuilderError::BadBlock(block)));
+                Err(nom::Err::Error(nom::simple_errors::Context::Code(context, _))) => {
+                    let lead_len = end_idx - context.len();
+                    Err(ParserError {
+                        leading: &remaining[..lead_len],
+                        trailing: &remaining[lead_len..end_idx + close_len],
+                    })
                 }
-                match last_ent {
-                    Some((ent_idx, ent_text)) => {
-                        if let EntityBr = block.items[ent_idx+1] {
-                            block.items.drain(..ent_idx+2);
-                        } else {
-                            block.items.drain(..ent_idx+1);
-                        }
-                        blocks.push(block);
-                        main_word = ent_text;
-                    }
-                    None => return Some(Err(BuilderError::BadBlock(block)))
-                }
+                Err(_) => unreachable!(),
             }
-            Some(Err(err)) => return Some(Err(BuilderError::FromParser(err))),
-            None => return None,
-        }
-        while let Some(block_res) = self.parser.next() {
-            match block_res {
-                Ok(block) => {
-                    if let Tagged("ent", _) = block.items[0] {
-                        self.block_buffer = Some(Ok(block));
-                        break;
-                    } else {
-                        blocks.push(block);
-                    }
-                }
-                Err(err) => {
-                    self.block_buffer = Some(Err(err));
-                    break;
-                }
-            }
-        }
-        Some(Ok(Entry { main_word, blocks }))
+        })
     }
 }
 
@@ -276,22 +256,6 @@ impl<'a> Display for Entry<'a> {
             write!(f, "\n{}\n", b)?;
         }
         write!(f, "</entry>")
-    }
-}
-
-#[derive(Debug)]
-pub enum BuilderError<'a> {
-    FromParser(ParserError<'a>),
-    BadBlock(Block<'a>),
-}
-
-impl<'a> Display for BuilderError<'a> {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        use self::BuilderError::*;
-        match *self {
-            FromParser(parser_err) => parser_err.fmt(f),
-            BadBlock(ref block) => write!(f, "[ERROR->]{}", block),
-        }
     }
 }
 
@@ -383,13 +347,13 @@ where T: PartialEq, F: Fn(&T) -> bool {
 
 #[cfg(test)]
 mod test {
-    use super::Parser;
+    use super::EntryParser;
 
     fn identity(input: &str) -> String {
         use std::fmt::Write;
-        let mut block_iter = Parser::new(input);
-        let block_res = block_iter.next().expect("no block found!");
-        assert!(block_iter.remaining().is_empty());
+        let mut entry_iter = EntryParser::new(input);
+        let block_res = entry_iter.next().expect("no block found!");
+        assert!(entry_iter.remaining().is_empty());
         let block = block_res.expect("bad block");
         let mut output = String::new();
         write!(output, "{}", block).unwrap();

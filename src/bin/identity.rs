@@ -1,10 +1,10 @@
 extern crate gcide;
 
-use gcide::{binutils, EntryBuilder};
+use gcide::{binutils, EntryParser};
 
 fn patch(contents: &str) -> String {
     let mut patched = String::with_capacity(contents.len());
-    let mut entry_iter = EntryBuilder::new(contents);
+    let mut entry_iter = EntryParser::new(contents);
     if let Some(preface) = entry_iter.get_preface() {
         patched.push_str(preface);
         patched.push('\n');
