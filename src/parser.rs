@@ -9,21 +9,19 @@ pub struct Block<'a> {
     pub sources: Vec<&'a str>,
 }
 
+const SRC_DELIM: &'static str = ";;";
+
 impl<'a> Display for Block<'a> {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        write!(f, "<p>")?;
+        if self.sources.is_empty() {
+            write!(f, "<p>")?;
+        } else {
+            write!(f, "<p source=\"{}\">", self.sources.join(SRC_DELIM))?;
+        }
         for t in &self.items {
             write!(f, "{}", t)?;
         }
-        if self.sources.len() > 0 {
-            let mut sources = Vec::new();
-            for s in &self.sources {
-                sources.push(format!("<source>{}</source>", s));
-            }
-            write!(f, "<br/\n[{}]</p>", sources.join(" + "))
-        } else {
-            write!(f, "</p>")
-        }
+        write!(f, "</p>")
     }
 }
 
@@ -167,6 +165,7 @@ impl<'a> Display for ParserError<'a> {
 pub struct Entry<'a> {
     pub main_word: &'a str,
     pub blocks: Vec<Block<'a>>,
+    pub source: String,
 }
 
 pub struct EntryParser<'a> {
@@ -222,9 +221,25 @@ impl<'a> Iterator for EntryParser<'a> {
             match entry_head(&remaining[..end_idx]) {
                 Ok((block_str, EntryHead { main_word })) => {
                     let mut blocks = Vec::new();
+                    let mut first = true;
+                    let mut sources = vec![];
                     for block_res in BlockParser::new(block_str) {
                         match block_res {
-                            Ok(block) => blocks.push(block),
+                            Ok(mut block) => {
+                                if block.sources.is_empty() {
+                                    block.sources = vec![""];
+                                } else {
+                                    block.sources.sort();
+                                }
+                                if first {
+                                    sources = block.sources;
+                                    block.sources = vec![];
+                                    first = false;
+                                } else if block.sources == sources {
+                                    block.sources = vec![]
+                                }
+                                blocks.push(block);
+                            }
                             Err(ParserError { trailing, .. }) => {
                                 let lead_len = end_idx + 1 - trailing.len();
                                 return Err(ParserError {
@@ -234,7 +249,8 @@ impl<'a> Iterator for EntryParser<'a> {
                             },
                         }
                     }
-                    Ok(Entry { main_word, blocks })
+                    let source = sources.join(SRC_DELIM);
+                    Ok(Entry { main_word, blocks, source })
                 }
                 Err(nom::Err::Error(nom::simple_errors::Context::Code(context, _))) => {
                     let lead_len = end_idx - context.len();
@@ -251,7 +267,7 @@ impl<'a> Iterator for EntryParser<'a> {
 
 impl<'a> Display for Entry<'a> {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        write!(f, "<entry main-word=\"{}\">", self.main_word)?;
+        write!(f, "<entry main-word=\"{}\" source=\"{}\">", self.main_word, self.source)?;
         for b in &self.blocks {
             write!(f, "\n{}\n", b)?;
         }
@@ -363,13 +379,14 @@ mod test {
     #[test]
     fn simple() {
         let block_str = "<entry main-word=\"Q\">\n<p><hw>Q</hw> <pr>(k<umac/)</pr>, <def>the seventeenth letter of the English alphabet.</def><br/\n[<source>1913 Webster</source>]</p>\n</entry>";
-        assert_eq!(block_str, identity(block_str));
+        let expected = "<entry main-word=\"Q\" source=\"1913 Webster\">\n<p><hw>Q</hw> <pr>(k<umac/)</pr>, <def>the seventeenth letter of the English alphabet.</def></p>\n</entry>";
+        assert_eq!(expected, identity(block_str));
     }
 
     #[test]
     fn unpaired() {
         let block_str = "<entry main-word=\"Q\">\n<p><hw>Q</hw> <def>here are two <i>unpaired tags</b>.</def></p>\n</entry>";
-        let expected = "<entry main-word=\"Q\">\n<p><hw>Q</hw> <def>here are two [ERROR->]<i>unpaired tags[ERROR->]</b>.</def></p>\n</entry>";
+        let expected = "<entry main-word=\"Q\" source=\"\">\n<p><hw>Q</hw> <def>here are two [ERROR->]<i>unpaired tags[ERROR->]</b>.</def></p>\n</entry>";
         assert_eq!(expected, identity(block_str));
     }
 }
