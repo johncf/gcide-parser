@@ -6,17 +6,14 @@ use nom::{alphanumeric1, self};
 #[derive(Debug)]
 pub struct Block<'a> {
     pub items: Vec<BlockItem<'a>>,
-    pub sources: Vec<&'a str>,
+    pub source: Option<&'a str>,
 }
-
-const SRC_DELIM: &'static str = ";;";
 
 impl<'a> Display for Block<'a> {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        if self.sources.is_empty() {
-            write!(f, "<p>")?;
-        } else {
-            write!(f, "<p source=\"{}\">", self.sources.join(SRC_DELIM))?;
+        match self.source {
+            Some(source) => write!(f, "<p source=\"{}\">", source)?,
+            None => write!(f, "<p>")?,
         }
         for t in &self.items {
             write!(f, "{}", t)?;
@@ -97,11 +94,20 @@ named!(comment<CompleteStr, BlockItem>,
 named!(ext_link<CompleteStr, BlockItem>,
        do_parse!(
            tag!("<a href=\"") >>
-           url: is_not!("\"") >>
+           url: take_till!(|c| c == '"') >>
            tag!("\">") >>
            text: is_not!("<>") >>
            tag!("</a>") >>
            ( BlockItem::ExternalLink(url.0, text.0) )));
+
+// TODO extra
+
+named!(block_head<&str, Option<&str>>,
+       do_parse!(
+           tag!("<p") >>
+           source: opt!(delimited!(tag!(" source=\""), take_till!(|c| c == '"'), tag!("\""))) >>
+           tag!(">") >>
+           ( source )));
 
 struct BlockParser<'a> {
     contents: &'a str,
@@ -117,10 +123,10 @@ impl<'a> Iterator for BlockParser<'a> {
     type Item = Result<Block<'a>, ParserError<'a>>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.contents.find("<p>").map(|start_idx| {
+        self.contents.find("<p").map(|start_idx| {
             let remaining = &self.contents[start_idx..];
             let end_idx = match remaining.find("</p>") {
-                Some(i) => i + 4,
+                Some(i) => i,
                 None => {
                     self.contents = ""; // further parsing not possible
                     return Err(ParserError {
@@ -129,20 +135,35 @@ impl<'a> Iterator for BlockParser<'a> {
                     });
                 }
             };
-            let block_str = &remaining[..end_idx];
-            self.contents = &remaining[end_idx..];
-            match parse_items(CompleteStr(block_str)) {
-                Ok((unparsed, items)) => {
-                    if unparsed.len() > 0 {
-                        self.contents = ""; // further parsing not needed
-                        let lead_len = block_str.len() - unparsed.len();
-                        Err(ParserError {
-                            leading: &block_str[..lead_len],
-                            trailing: &remaining[lead_len..],
-                        })
-                    } else {
-                        Ok(process_block_items(items))
+            self.contents = &remaining[end_idx + 4..];
+            match block_head(&remaining[..end_idx]) {
+                Ok((block_str, source_opt)) => {
+                    match parse_items(CompleteStr(block_str)) {
+                        Ok((unparsed, items)) => {
+                            if unparsed.len() > 0 {
+                                self.contents = ""; // further parsing not needed
+                                let lead_len = end_idx - unparsed.len();
+                                Err(ParserError {
+                                    leading: &remaining[..lead_len],
+                                    trailing: &remaining[lead_len..],
+                                })
+                            } else {
+                                Ok(Block {
+                                    items: pair_up_items(items),
+                                    source: source_opt,
+                                })
+                            }
+                        }
+                        Err(_) => unreachable!(),
                     }
+                }
+                Err(nom::Err::Error(nom::simple_errors::Context::Code(context, _))) => {
+                    self.contents = ""; // further parsing not needed
+                    let lead_len = end_idx - context.len();
+                    Err(ParserError {
+                        leading: &remaining[..lead_len],
+                        trailing: &remaining[lead_len..],
+                    })
                 }
                 Err(_) => unreachable!(),
             }
@@ -165,7 +186,7 @@ impl<'a> Display for ParserError<'a> {
 pub struct Entry<'a> {
     pub main_word: &'a str,
     pub blocks: Vec<Block<'a>>,
-    pub source: String,
+    pub source: &'a str,
 }
 
 pub struct EntryParser<'a> {
@@ -192,13 +213,16 @@ impl<'a> EntryParser<'a> {
 
 struct EntryHead<'a> {
     main_word: &'a str,
+    source: &'a str,
 }
 
 named!(entry_head<&str, EntryHead>,
        do_parse!(
-           tag!("<entry ") >>
-           main_word: delimited!(tag!("main-word=\""), is_not!("\""), tag!("\">\n")) >>
-           ( EntryHead { main_word } )));
+           tag!("<entry") >>
+           main_word: delimited!(tag!(" main-word=\""), take_till!(|c| c == '"'), tag!("\"")) >>
+           source: delimited!(tag!(" source=\""), take_till!(|c| c == '"'), tag!("\"")) >>
+           tag!(">") >>
+           ( EntryHead { main_word, source } )));
 
 impl<'a> Iterator for EntryParser<'a> {
     type Item = Result<Entry<'a>, ParserError<'a>>;
@@ -219,27 +243,11 @@ impl<'a> Iterator for EntryParser<'a> {
             let close_len = "</entry>".len();
             self.contents = &remaining[end_idx + close_len..];
             match entry_head(&remaining[..end_idx]) {
-                Ok((block_str, EntryHead { main_word })) => {
+                Ok((block_str, EntryHead { main_word, source })) => {
                     let mut blocks = Vec::new();
-                    let mut first = true;
-                    let mut sources = vec![];
                     for block_res in BlockParser::new(block_str) {
                         match block_res {
-                            Ok(mut block) => {
-                                if block.sources.is_empty() {
-                                    block.sources = vec![""];
-                                } else {
-                                    block.sources.sort();
-                                }
-                                if first {
-                                    sources = block.sources;
-                                    block.sources = vec![];
-                                    first = false;
-                                } else if block.sources == sources {
-                                    block.sources = vec![]
-                                }
-                                blocks.push(block);
-                            }
+                            Ok(mut block) => blocks.push(block),
                             Err(ParserError { trailing, .. }) => {
                                 let lead_len = end_idx + 1 - trailing.len();
                                 return Err(ParserError {
@@ -249,7 +257,6 @@ impl<'a> Iterator for EntryParser<'a> {
                             },
                         }
                     }
-                    let source = sources.join(SRC_DELIM);
                     Ok(Entry { main_word, blocks, source })
                 }
                 Err(nom::Err::Error(nom::simple_errors::Context::Code(context, _))) => {
@@ -283,27 +290,8 @@ fn pair_up_items<'a>(items: Vec<BlockItem<'a>>) -> Vec<BlockItem<'a>> {
         match item {
             UnpairedTagClose(name) => {
                 if let Some(open_idx) = linear_search_rev(&stack, &UnpairedTagOpen(name)) {
-                    if name == "source" {
-                        if open_idx == stack.len() - 2 {
-                            if let Some(Plain(text)) = stack.pop() {
-                                stack[open_idx] = Source(text);
-                                continue;
-                            }
-                        }
-                        stack.drain(open_idx+1..);
-                        stack[open_idx] = Source("[ERROR->]plaintext");
-                    } else {
-                        if name == "col" && open_idx == stack.len() - 2 {
-                            if let Some(&Tagged("b", _)) = stack.last() {
-                                if let Some(Tagged("b", col_items)) = stack.pop() {
-                                    stack[open_idx] = Tagged("col", col_items);
-                                    continue;
-                                }
-                            }
-                        }
-                        let tagged = Tagged(name, stack.drain(open_idx+1..).collect());
-                        stack[open_idx] = tagged;
-                    }
+                    let tagged = Tagged(name, stack.drain(open_idx+1..).collect());
+                    stack[open_idx] = tagged;
                 } else {
                     stack.push(item);
                 }
@@ -312,39 +300,6 @@ fn pair_up_items<'a>(items: Vec<BlockItem<'a>>) -> Vec<BlockItem<'a>> {
         }
     }
     stack
-}
-
-fn process_block_items<'a>(mut items: Vec<BlockItem<'a>>) -> Block<'a> {
-    use self::BlockItem::*;
-
-    assert_eq!(items.remove(0), UnpairedTagOpen("p"));
-    assert_eq!(items.pop(), Some(UnpairedTagClose("p")));
-
-    items = pair_up_items(items);
-
-    let mut sources = Vec::new();
-    if let Some(&Plain("]")) = items.last() {
-        let is_bracket_open = |item: &BlockItem| *item == Plain("[") || *item == Plain("\n[");
-        if let Some(idx) = linear_search_rev_by(&items, is_bracket_open) {
-            if let Some(&Source(_)) = items.get(idx+1) {
-                for item in &items[idx+1..] {
-                    match *item {
-                        Source(name) => sources.push(name),
-                        _ => (),
-                    }
-                }
-                match items[idx-1] {
-                    EntityBr => items.drain(idx-1..),
-                    _ => items.drain(idx..),
-                };
-            }
-        }
-    }
-
-    Block {
-        items: items,
-        sources: sources,
-    }
 }
 
 fn linear_search_rev<T: PartialEq>(haystack: &Vec<T>, needle: &T) -> Option<usize> {
