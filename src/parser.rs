@@ -24,16 +24,28 @@ impl<'a> Display for Block<'a> {
 
 #[derive(Debug, PartialEq)]
 pub enum BlockItem<'a> {
-    Tagged(&'a str, Vec<BlockItem<'a>>),
+    Tagged { name: &'a str, items: Vec<BlockItem<'a>>, source: Option<&'a str> },
     Comment(&'a str),
     Entity(&'a str),
     EntityBr,
     EntityUnk,
     ExternalLink(&'a str, &'a str),
-    Plain(&'a str),
-    Source(&'a str),
-    UnpairedTagOpen(&'a str),
+    PlainText(&'a str),
+    UnpairedTagOpen(&'a str, Option<&'a str>),
     UnpairedTagClose(&'a str),
+}
+
+fn write_tag_open(f: &mut Formatter, name: &str, source: Option<&str>) -> fmt::Result {
+    match source {
+        Some(source) => {
+            if name == "extra" {
+                write!(f, "<{} source=\"{}\">", name, source)
+            } else {
+                write!(f, "<{} [ERROR->]source=\"{}\">", name, source)
+            }
+        }
+        None => write!(f, "<{}>", name),
+    }
 }
 
 impl<'a> Display for BlockItem<'a> {
@@ -46,24 +58,26 @@ impl<'a> Display for BlockItem<'a> {
             EntityBr => write!(f, "<br/\n"),
             EntityUnk => write!(f, "<?/"),
             ExternalLink(url, text) => write!(f, "<a href=\"{}\">{}</a>", url, text),
-            Plain(text) => write!(f, "{}", text),
-            Source(text) => write!(f, "[ERROR->]<source>{}</source>", text),
-            Tagged(name, ref items) => {
-                write!(f, "<{}>", name)?;
+            PlainText(text) => write!(f, "{}", text),
+            Tagged { name, ref items, source } => {
+                write_tag_open(f, name, source)?;
                 for item in items {
                     write!(f, "{}", item)?;
                 }
                 write!(f, "</{}>", name)
             }
-            UnpairedTagOpen(name) => if allowed_to_dangle.contains(&name) {
-                write!(f, "<{}>", name)
-            } else {
-                write!(f, "[ERROR->]<{}>", name)
+            UnpairedTagOpen(name, source) => {
+                if !allowed_to_dangle.contains(&name) {
+                    write!(f, "[ERROR->]")?;
+                }
+                write_tag_open(f, name, source)
             }
-            UnpairedTagClose(name) => if allowed_to_dangle.contains(&name) {
-                write!(f, "</{}>", name)
-            } else {
-                write!(f, "[ERROR->]</{}>", name)
+            UnpairedTagClose(name) => {
+                if !allowed_to_dangle.contains(&name) {
+                    write!(f, "[ERROR->]</{}>", name)
+                } else {
+                    write!(f, "</{}>", name)
+                }
             }
         }
     }
@@ -72,13 +86,21 @@ impl<'a> Display for BlockItem<'a> {
 named!(parse_items<CompleteStr, Vec<BlockItem>>, many0!(block_item));
 
 named!(block_item<CompleteStr, BlockItem>,
-       alt!(plain | open_tag | close_tag | entity | comment | ext_link));
+       alt!(plain_text | open_tag | close_tag | entity | comment | ext_link));
 
-named!(plain<CompleteStr, BlockItem>,
-       map!(is_not!("<>"), |s| BlockItem::Plain(s.0)));
+named!(plain_text<CompleteStr, BlockItem>,
+       map!(is_not!("<>"), |s| BlockItem::PlainText(s.0)));
+
+named!(source_attr<CompleteStr, CompleteStr>,
+       delimited!(tag!(" source=\""), take_till!(|c| c == '"'), tag!("\"")));
 
 named!(open_tag<CompleteStr, BlockItem>,
-       map!(delimited!(tag!("<"), alphanumeric1, tag!(">")), |s| BlockItem::UnpairedTagOpen(s.0)));
+       do_parse!(
+           tag!("<") >>
+           name: alphanumeric1 >>
+           source: opt!(source_attr) >>
+           tag!(">") >>
+           ( BlockItem::UnpairedTagOpen(name.0, source.map(|s| s.0)) )));
 
 named!(close_tag<CompleteStr, BlockItem>,
        map!(delimited!(tag!("</"), alphanumeric1, tag!(">")), |s| BlockItem::UnpairedTagClose(s.0)));
@@ -100,14 +122,12 @@ named!(ext_link<CompleteStr, BlockItem>,
            tag!("</a>") >>
            ( BlockItem::ExternalLink(url.0, text.0) )));
 
-// TODO extra
-
-named!(block_head<&str, Option<&str>>,
+named!(block_head<CompleteStr, Option<&str>>,
        do_parse!(
            tag!("<p") >>
-           source: opt!(delimited!(tag!(" source=\""), take_till!(|c| c == '"'), tag!("\""))) >>
+           source: opt!(source_attr) >>
            tag!(">") >>
-           ( source )));
+           ( source.map(|s| s.0) )));
 
 struct BlockParser<'a> {
     contents: &'a str,
@@ -136,9 +156,9 @@ impl<'a> Iterator for BlockParser<'a> {
                 }
             };
             self.contents = &remaining[end_idx + 4..];
-            match block_head(&remaining[..end_idx]) {
+            match block_head(CompleteStr(&remaining[..end_idx])) {
                 Ok((block_str, source_opt)) => {
-                    match parse_items(CompleteStr(block_str)) {
+                    match parse_items(block_str) {
                         Ok((unparsed, items)) => {
                             if unparsed.len() > 0 {
                                 self.contents = ""; // further parsing not needed
@@ -249,7 +269,7 @@ impl<'a> Iterator for EntryParser<'a> {
                         match block_res {
                             Ok(mut block) => blocks.push(block),
                             Err(ParserError { trailing, .. }) => {
-                                let lead_len = end_idx + 1 - trailing.len();
+                                let lead_len = end_idx - trailing.len();
                                 return Err(ParserError {
                                     leading: &remaining[..lead_len],
                                     trailing: &remaining[lead_len..end_idx + close_len],
@@ -289,8 +309,18 @@ fn pair_up_items<'a>(items: Vec<BlockItem<'a>>) -> Vec<BlockItem<'a>> {
     for item in items {
         match item {
             UnpairedTagClose(name) => {
-                if let Some(open_idx) = linear_search_rev(&stack, &UnpairedTagOpen(name)) {
-                    let tagged = Tagged(name, stack.drain(open_idx+1..).collect());
+                let is_tag_open_name = |item: &BlockItem<'a>| {
+                    match *item {
+                        UnpairedTagOpen(n, src) if n == name => Some(src),
+                        _ => None,
+                    }
+                };
+                if let Some((open_idx, source)) = linear_search_rev_by(&stack, is_tag_open_name) {
+                    let tagged = Tagged {
+                        name: name,
+                        items: stack.drain(open_idx+1..).collect(),
+                        source: source,
+                    };
                     stack[open_idx] = tagged;
                 } else {
                     stack.push(item);
@@ -302,15 +332,11 @@ fn pair_up_items<'a>(items: Vec<BlockItem<'a>>) -> Vec<BlockItem<'a>> {
     stack
 }
 
-fn linear_search_rev<T: PartialEq>(haystack: &Vec<T>, needle: &T) -> Option<usize> {
-    linear_search_rev_by(haystack, |item| item == needle)
-}
-
-fn linear_search_rev_by<T, F>(haystack: &Vec<T>, is_needle: F) -> Option<usize>
-where T: PartialEq, F: Fn(&T) -> bool {
+fn linear_search_rev_by<T, U, F>(haystack: &Vec<T>, filter_map: F) -> Option<(usize, U)>
+where T: PartialEq, F: Fn(&T) -> Option<U> {
     for (idx, item) in haystack.iter().enumerate().rev() {
-        if is_needle(item) {
-            return Some(idx);
+        if let Some(out) = filter_map(item) {
+            return Some((idx, out));
         }
     }
     return None;
