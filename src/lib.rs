@@ -5,6 +5,9 @@ extern crate nom;
 #[macro_use]
 extern crate structopt;
 
+#[macro_use]
+extern crate bitflags;
+
 #[cfg(feature = "binaries")]
 pub mod binutils;
 

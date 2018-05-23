@@ -18,21 +18,62 @@ pub enum EntryItem<'a> {
     EntityBr,
     EntityUnk,
     ExternalLink(&'a str, &'a str),
+    Greek(Vec<GreekItem>),
     PlainText(&'a str),
     UnpairedTagOpen(&'a str, Option<&'a str>),
     UnpairedTagClose(&'a str),
 }
 
+#[derive(Debug, PartialEq)]
+pub enum GreekItem {
+    Letter(char, GreekMods),
+    Other(char), // typically, hyphen or space
+}
+
+bitflags! {
+    pub struct GreekMods: u16 {
+        const SLENIS     = 1 << 0;
+        const SASPER     = 1 << 1;
+        const ACUTE      = 1 << 2;
+        const GRAVE      = 1 << 3;
+        const CIRCUMFLEX = 1 << 4;
+        const IOTASUB    = 1 << 5;
+        const DIAERESIS  = 1 << 6;
+    }
+}
+
 named!(parse_items<CompleteStr, Vec<EntryItem>>, many0!(entry_item));
 
 named!(entry_item<CompleteStr, EntryItem>,
-       alt!(plain_text | open_tag | close_tag | entity | comment | ext_link));
+       alt!(plain_text | grk_tag | open_tag | close_tag | entity | comment | ext_link));
 
 named!(plain_text<CompleteStr, EntryItem>,
        map!(is_not!("<>"), |s| EntryItem::PlainText(s.0)));
 
 named!(source_attr<CompleteStr, CompleteStr>,
        delimited!(tag!(" source=\""), take_till!(|c| c == '"'), tag!("\"")));
+
+named!(grk_tag<CompleteStr, EntryItem>,
+       do_parse!(
+           tag!("<grk>") >>
+           items: many1!(grk_item) >>
+           tag!("</grk>") >>
+           ( EntryItem::Greek(items) )));
+
+named!(grk_item<CompleteStr, GreekItem>,
+       alt!(grk_letter | grk_other));
+
+named!(grk_letter<CompleteStr, GreekItem>,
+       do_parse!(
+           _pre: opt!(one_of!("'\"")) >>
+           _alpha: grk_alphabet >>
+           _post: many0!(one_of!("`~^,:")) >>
+           ( unimplemented!() ))); // TODO
+
+named!(grk_other<CompleteStr, GreekItem>,
+       map!(one_of!(" -"), |c| GreekItem::Other(c)));
+
+named!(grk_alphabet<CompleteStr, char>, one_of!("abcdefghijklmnopqrstvwxyzABCDEFGHIJKLMNOPQRSTWXYZ"));
 
 named!(open_tag<CompleteStr, EntryItem>,
        do_parse!(

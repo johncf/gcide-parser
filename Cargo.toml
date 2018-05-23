@@ -17,7 +17,8 @@ default = ["binaries"]
 binaries = ["structopt"]
 
 [dependencies]
-nom = "4.0.0-beta3"
+nom = "4.0"
+bitflags = "1.0"
 
 encoding = { version = "0.2", optional = true }
 structopt = { version = "0.2", optional = true }

@@ -36,6 +36,7 @@ impl<'a> DisplayCIDE for EntryItem<'a> {
             EntityBr => write!(f, "<br/\n"),
             EntityUnk => write!(f, "<?/"),
             ExternalLink(url, text) => write!(f, "<a href=\"{}\">{}</a>", url, text),
+            Greek(_) => unimplemented!(), // TODO
             PlainText(text) => write!(f, "{}", text),
             Tagged { name, ref items, source } => {
                 write_tag_open(f, name, source)?;
