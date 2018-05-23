@@ -1,6 +1,6 @@
 extern crate gcide;
 
-use gcide::{binutils, EntryParser};
+use gcide::{binutils, EntryParser, CIDE};
 
 fn patch(contents: &str) -> String {
     let mut patched = String::with_capacity(contents.len());
@@ -12,7 +12,7 @@ fn patch(contents: &str) -> String {
     while let Some(entry_res) = entry_iter.next() {
         use std::fmt::Write;
         match entry_res {
-            Ok(entry) => write!(patched, "\n{}\n", entry).unwrap(),
+            Ok(entry) => write!(patched, "\n{}\n", CIDE(&entry)).unwrap(),
             Err(err) => write!(patched, "\n{}\n", err).unwrap(),
         }
     }

@@ -9,5 +9,7 @@ extern crate structopt;
 pub mod binutils;
 
 pub mod parser;
+pub mod exporter;
 
 pub use parser::EntryParser;
+pub use exporter::CIDE;

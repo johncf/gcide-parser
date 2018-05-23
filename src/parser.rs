@@ -23,64 +23,6 @@ pub enum EntryItem<'a> {
     UnpairedTagClose(&'a str),
 }
 
-impl<'a> Display for Entry<'a> {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        write!(f, "<entry main-word=\"{}\" source=\"{}\">", self.main_word, self.source)?;
-        for i in &self.items {
-            write!(f, "{}", i)?;
-        }
-        write!(f, "</entry>")
-    }
-}
-
-impl<'a> Display for EntryItem<'a> {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        use self::EntryItem::*;
-        let allowed_to_dangle = &["collapse", "cs", "note", "usage"];
-        match *self {
-            Comment(text) => write!(f, "<--{}-->", text),
-            Entity(name) => write!(f, "<{}/", name),
-            EntityBr => write!(f, "<br/\n"),
-            EntityUnk => write!(f, "<?/"),
-            ExternalLink(url, text) => write!(f, "<a href=\"{}\">{}</a>", url, text),
-            PlainText(text) => write!(f, "{}", text),
-            Tagged { name, ref items, source } => {
-                write_tag_open(f, name, source)?;
-                for item in items {
-                    write!(f, "{}", item)?;
-                }
-                write!(f, "</{}>", name)
-            }
-            UnpairedTagOpen(name, source) => {
-                if !allowed_to_dangle.contains(&name) {
-                    write!(f, "[ERROR->]")?;
-                }
-                write_tag_open(f, name, source)
-            }
-            UnpairedTagClose(name) => {
-                if !allowed_to_dangle.contains(&name) {
-                    write!(f, "[ERROR->]</{}>", name)
-                } else {
-                    write!(f, "</{}>", name)
-                }
-            }
-        }
-    }
-}
-
-fn write_tag_open(f: &mut Formatter, name: &str, source: Option<&str>) -> fmt::Result {
-    match source {
-        Some(source) => {
-            if name == "p" || name == "extra" {
-                write!(f, "<{} source=\"{}\">", name, source)
-            } else {
-                write!(f, "<{} [ERROR->]source=\"{}\">", name, source)
-            }
-        }
-        None => write!(f, "<{}>", name),
-    }
-}
-
 named!(parse_items<CompleteStr, Vec<EntryItem>>, many0!(entry_item));
 
 named!(entry_item<CompleteStr, EntryItem>,
@@ -257,34 +199,4 @@ where T: PartialEq, F: Fn(&T) -> Option<U> {
         }
     }
     return None;
-}
-
-#[cfg(test)]
-mod test {
-    use super::EntryParser;
-
-    fn identity(input: &str) -> String {
-        use std::fmt::Write;
-        let mut entry_iter = EntryParser::new(input);
-        let block_res = entry_iter.next().expect("no block found!");
-        assert!(entry_iter.remaining().is_empty());
-        let block = block_res.expect("bad block");
-        let mut output = String::new();
-        write!(output, "{}", block).unwrap();
-        output
-    }
-
-    #[test]
-    fn simple() {
-        let block_str = "<entry main-word=\"Q\" source=\"1913 Webster\">\n<p><hw>Q</hw> <pr>(k<umac/)</pr>, <def>the seventeenth letter of the English alphabet.</def></p>\n</entry>";
-        let expected = block_str;
-        assert_eq!(expected, identity(block_str));
-    }
-
-    #[test]
-    fn unpaired() {
-        let block_str = "<entry main-word=\"Q\" source=\"\">\n<p><hw>Q</hw> <def>here are two <i>unpaired tags</b>.</def></p>\n</entry>";
-        let expected = "<entry main-word=\"Q\" source=\"\">\n<p><hw>Q</hw> <def>here are two [ERROR->]<i>unpaired tags[ERROR->]</b>.</def></p>\n</entry>";
-        assert_eq!(expected, identity(block_str));
-    }
 }
