@@ -160,24 +160,44 @@ impl<'a> DisplayHTML for EntryItem<'a> {
                         items.fmt_html(f)?;
                         write!(f, "</p>")
                     }
-                    "hw" | "ety" | "ets" | "etsep" | "pr" | "def" | "col" | "cd" | "ecol" | "fld" | "pos" | "sd" | "sn" => {
+                    "hw" => {
+                        write!(f, "<strong class=\"hw\">")?;
+                        items.fmt_html(f)?;
+                        write!(f, "</strong>")
+                    }
+                    "ety" | "ets" | "etsep" | "pr" | "def" | "altname" | "col" | "cd" | "plain"
+                        | "fld" | "mark" | "sd" | "sn" | "au" | "ecol" | "stype" => {
                         write!(f, "<span class=\"{}\">", name)?;
                         items.fmt_html(f)?;
                         write!(f, "</span>")
+                    }
+                    "pos" | "pluf" | "singf" => {
+                        write!(f, "<em>")?;
+                        items.fmt_html(f)?;
+                        write!(f, "</em>")
+                    }
+                    "asp" | "adjf" | "conjf" | "decf" | "plw" | "singw" | "wf" => {
+                        write!(f, "<strong class=\"altf\">")?;
+                        items.fmt_html(f)?;
+                        write!(f, "</strong>")
                     }
                     "er" | "snr" | "sdr" | "cref" => {
                         write!(f, "<a href=\"#\" class=\"{}\">", name)?;
                         items.fmt_html(f)?;
                         write!(f, "</a>")
                     }
-                    "as" | "def2" | "altsp" | "cs" | "mcol" | "mhw" | "note" | "rj" | "syn"
-                        | "usage" | "amorph" | "nmorph" | "vmorph" => {
+                    "as" | "def2" | "altsp" | "cs" | "mcol" | "mhw" | "note" | "syn" | "usage"
+                        | "mord" | "rj" | "specif" | "book" | "org" | "city" | "country" | "geog"
+                        | "plu" | "sing" | "amorph" | "nmorph" | "vmorph" | "wordforms" => {
                         items.fmt_html(f)
                     }
-                    "q" | "qau" => { // TODO
+                    "oneof" | "c" => { // TODO
                         items.fmt_html(f)
                     }
-                    "fam" | "gen" | "ord" | "spn" | "ex" | "qex" | "xex" | "it" => {
+                    "q" | "qau" => { // TODO use blockquote
+                        items.fmt_html(f)
+                    }
+                    "class" | "fam" | "gen" | "ord" | "spn" | "ex" | "qex" | "xex" | "it" => {
                         write!(f, "<em>")?;
                         items.fmt_html(f)?;
                         write!(f, "</em>")
@@ -230,7 +250,7 @@ impl DisplayHTML for GreekItem {
                 }
                 match letter {
                     Some(letter) => write!(f, "{}", letter),
-                    None => {
+                    None => { // TODO fallback to combining characters
                         eprintln!("composing greek letter failed: {} {:b}", base, mods);
                         write!(f, "\u{fffd}")
                     }
