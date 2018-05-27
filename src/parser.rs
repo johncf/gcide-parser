@@ -61,7 +61,7 @@ named!(grk_tag<CompleteStr, EntryItem>,
            tag!("</grk>") >>
            ({
                let mut items = items;
-               {
+               { // mark terminal sigmas
                    use parser::GreekItem::{Letter, Other};
                    let mut iter = items.iter_mut().peekable();
                    while let Some(gi) = iter.next() {

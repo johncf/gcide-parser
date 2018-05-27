@@ -2,6 +2,8 @@ use std::fmt::{self, Display, Formatter};
 
 use parser::{Entry, EntryItem, GreekItem, GreekMods};
 
+use unicode_normalization::char::compose as unic_compose;
+
 pub struct CIDE<'a>(pub &'a Entry<'a>);
 pub struct HTML<'a>(pub &'a Entry<'a>);
 //pub struct Plain<'a>(pub &'a Entry<'a>);
@@ -140,8 +142,14 @@ impl<'a> DisplayHTML for EntryItem<'a> {
             EntityBr => write!(f, "<br/>\n"),
             EntityUnk => write!(f, "&#xfffd;"),
             ExternalLink(url, text) => write!(f, "<a class=\"extern\" href=\"{}\">{}</a>", url, text),
-            Greek(_) => unimplemented!(), // TODO
-            PlainText(text) => write!(f, "{}", text.replace("&", "&amp;")), // TODO dashes
+            Greek(ref gitems) => {
+                write!(f, "<span class=\"greek\">")?;
+                for gi in gitems {
+                    gi.fmt_html(f)?;
+                }
+                write!(f, "</span>")
+            }
+            PlainText(text) => write!(f, "{}", text.replace("&", "&amp;")), // TODO dashes, single quotes
             Tagged { name, ref items, source } => {
                 match name {
                     "p" => {
@@ -152,8 +160,32 @@ impl<'a> DisplayHTML for EntryItem<'a> {
                         items.fmt_html(f)?;
                         write!(f, "</p>")
                     }
-                    "grk" => unimplemented!(),
-                    _ => write!(f, "&#xfffd;"),
+                    "hw" | "ety" | "ets" | "etsep" | "pr" | "def" | "col" | "cd" | "ecol" | "fld" | "pos" | "sd" | "sn" => {
+                        write!(f, "<span class=\"{}\">", name)?;
+                        items.fmt_html(f)?;
+                        write!(f, "</span>")
+                    }
+                    "er" | "snr" | "sdr" | "cref" => {
+                        write!(f, "<a href=\"#\" class=\"{}\">", name)?;
+                        items.fmt_html(f)?;
+                        write!(f, "</a>")
+                    }
+                    "as" | "def2" | "altsp" | "cs" | "mcol" | "mhw" | "note" | "rj" | "syn"
+                        | "usage" | "amorph" | "nmorph" | "vmorph" => {
+                        items.fmt_html(f)
+                    }
+                    "q" | "qau" => { // TODO
+                        items.fmt_html(f)
+                    }
+                    "fam" | "gen" | "ord" | "spn" | "ex" | "qex" | "xex" | "it" => {
+                        write!(f, "<em>")?;
+                        items.fmt_html(f)?;
+                        write!(f, "</em>")
+                    }
+                    _ => {
+                        eprintln!("unknown tag: {}", name);
+                        write!(f, "&#xfffd;<!--{}-->", name)
+                    }
 
                 }
             }
@@ -172,93 +204,54 @@ impl<'a> DisplayHTML for Vec<EntryItem<'a>> {
     }
 }
 
+impl DisplayHTML for GreekItem {
+    fn fmt_html(&self, f: &mut Formatter) -> fmt::Result {
+        match *self {
+            GreekItem::Letter(base, mods) => {
+                let mut letter = Some(grk_to_unicode(base, mods.contains(GreekMods::TERMINAL)));
+                let compose = |l_opt: Option<char>, m| l_opt.and_then(|l| unic_compose(l, m));
+                if mods.contains(GreekMods::SLENIS) {
+                    letter = compose(letter, '\u{0313}');
+                } else if mods.contains(GreekMods::SASPER) {
+                    letter = compose(letter, '\u{0314}');
+                }
+                if mods.contains(GreekMods::DIAERESIS) {
+                    letter = compose(letter, '\u{0308}');
+                }
+                if mods.contains(GreekMods::ACUTE) {
+                    letter = compose(letter, '\u{0301}');
+                } else if mods.contains(GreekMods::GRAVE) {
+                    letter = compose(letter, '\u{0300}');
+                } else if mods.contains(GreekMods::CIRCUMFLEX) {
+                    letter = compose(letter, '\u{0342}');
+                }
+                if mods.contains(GreekMods::IOTASUB) {
+                    letter = compose(letter, '\u{0345}');
+                }
+                match letter {
+                    Some(letter) => write!(f, "{}", letter),
+                    None => {
+                        eprintln!("composing greek letter failed: {} {:b}", base, mods);
+                        write!(f, "\u{fffd}")
+                    }
+                }
+            }
+            GreekItem::Other(c) => write!(f, "{}", c),
+        }
+    }
+}
+
 fn entity_to_html(entity: &str) -> &'static str {
     match entity {
         "lt"       => "&lt;",
         "gt"       => "&gt;",
-        "ae"       => "&aelig;",
-        "AE"       => "&AElig;",
-        "oe"       => "&oelig;",
-        "OE"       => "&OElig;",
-        "cced"     => "&ccedil;",
         "aring"    => "&aring;",
-        "aacute"   => "&aacute;",
-        "eacute"   => "&eacute;",
-        "iacute"   => "&iacute;",
-        "oacute"   => "&oacute;",
-        "uacute"   => "&uacute;",
-        "Eacute"   => "&Eacute;",
-        "acir"     => "&acirc;",
-        "ecir"     => "&ecirc;",
-        "icir"     => "&icirc;",
-        "ocir"     => "&ocirc;",
-        "ucir"     => "&ucirc;",
-        "agrave"   => "&agrave;",
-        "egrave"   => "&egrave;",
-        "igrave"   => "&igrave;",
-        "ograve"   => "&ograve;",
-        "ugrave"   => "&ugrave;",
-        "aum"      => "&auml;",
-        "eum"      => "&euml;",
-        "ium"      => "&iuml;",
-        "oum"      => "&ouml;",
-        "uum"      => "&uuml;",
         "atil"     => "&atilde;",
         "ntil"     => "&ntilde;",
-        "frac12"   => "&frac12;",
-        "frac14"   => "&frac14;",
-        "deg"      => "&deg;",
-        "prime"    => "&prime;",
-        "dprime"   => "&Prime;",
-        "ldquo"    => "&ldquo;",
-        "rdquo"    => "&rdquo;",
-        "lsquo"    => "&lsquo;",
-        "rsquo"    => "&rsquo;",
-        "sect"     => "&sect;",
-        "pound"    => "&pound;",
-        "mdash"    => "&mdash;",
         "edh"      => "&eth;",
         "thorn"    => "&thorn;",
-        "divide"   => "&divide;",
-        "times"    => "&times;",
         "rarr"     => "&rarr;",
-        "middot"   => "&middot;",
         "root"     => "&radic;",
-        "alpha"    => "&alpha;",
-        "beta"     => "&beta;",
-        "gamma"    => "&gamma;",
-        "GAMMA"    => "&Gamma;",
-        "delta"    => "&delta;",
-        "DELTA"    => "&Delta;",
-        "epsilon"  => "&epsilon;",
-        "zeta"     => "&zeta;",
-        "eta"      => "&eta;",
-        "theta"    => "&theta;",
-        "THETA"    => "&Theta;",
-        "iota"     => "&iota;",
-        "kappa"    => "&kappa;",
-        "lambda"   => "&lambda;",
-        "LAMBDA"   => "&Lambda;",
-        "mu"       => "&mu;",
-        "nu"       => "&nu;",
-        "xi"       => "&xi;",
-        "XI"       => "&Xi;",
-        "omicron"  => "&omicron;",
-        "pi"       => "&pi;",
-        "PI"       => "&Pi;",
-        "rho"      => "&rho;",
-        "sigma"    => "&sigma;",
-        "sigmat"   => "&sigmaf;",
-        "SIGMA"    => "&Sigma;",
-        "tau"      => "&tau;",
-        "upsilon"  => "&upsilon;",
-        "phi"      => "&phi;",
-        "PHI"      => "&Phi;",
-        "chi"      => "&chi;",
-        "psi"      => "&psi;",
-        "PSI"      => "&Psi;",
-        "omega"    => "&omega;",
-        "OMEGA"    => "&Omega;",
         "acute"    => "&acute;",
         "cflex"    => "&circ;",
         "srtil"    => "&tilde;",
@@ -333,10 +326,6 @@ fn entity_to_unicode(entity: &str) -> &'static str {
         "add"      => "a\u{0324}",
         "udd"      => "\u{1e73}",
         "nsm"      => "\u{1e49}",
-        "frac12"   => "\u{00bd}",
-        "frac14"   => "\u{00bc}",
-        "frac13"   => "\u{2153}",
-        "frac23"   => "\u{2154}",
         "hand"     => "\u{261e}",
         "deg"      => "\u{00b0}",
         "prime"    => "\u{2032}",
@@ -412,6 +401,37 @@ fn entity_to_unicode(entity: &str) -> &'static str {
         "esup"     => "\u{1d49}",
         "isub"     => "\u{1d62}",
         _          => "\u{fffd}"
+    }
+}
+
+fn grk_to_unicode(c: char, is_terminal: bool) -> char {
+    match c {
+        'a' => '\u{03b1}', 'b' => '\u{03b2}',
+        'g' => '\u{03b3}', 'd' => '\u{03b4}',
+        'e' => '\u{03b5}', 'z' => '\u{03b6}',
+        'h' => '\u{03b7}', 'q' => '\u{03b8}',
+        'i' => '\u{03b9}', 'k' => '\u{03ba}',
+        'l' => '\u{03bb}', 'm' => '\u{03bc}',
+        'n' => '\u{03bd}', 'x' => '\u{03be}',
+        'o' => '\u{03bf}', 'p' => '\u{03c0}',
+        'r' => '\u{03c1}', 's' => if is_terminal { '\u{03c2}' } else { '\u{03c3}' },
+        't' => '\u{03c4}', 'y' => '\u{03c5}',
+        'f' => '\u{03c6}', 'c' => '\u{03c7}',
+        'j' => '\u{03c8}', 'w' => '\u{03c9}',
+        'v' => '\u{03dd}',
+        'A' => '\u{0391}', 'B' => '\u{0392}',
+        'G' => '\u{0393}', 'D' => '\u{0394}',
+        'E' => '\u{0395}', 'Z' => '\u{0396}',
+        'H' => '\u{0397}', 'Q' => '\u{0398}',
+        'I' => '\u{0399}', 'K' => '\u{039a}',
+        'L' => '\u{039b}', 'M' => '\u{039c}',
+        'N' => '\u{039d}', 'X' => '\u{039e}',
+        'O' => '\u{039f}', 'P' => '\u{03a0}',
+        'R' => '\u{03a1}', 'S' => '\u{03a3}',
+        'T' => '\u{03a4}', 'Y' => '\u{03a5}',
+        'F' => '\u{03a6}', 'C' => '\u{03a7}',
+        'J' => '\u{03a8}', 'W' => '\u{03a9}',
+        _   => '\u{fffd}',
     }
 }
 

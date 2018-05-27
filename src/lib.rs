@@ -8,6 +8,8 @@ extern crate structopt;
 #[macro_use]
 extern crate bitflags;
 
+extern crate unicode_normalization;
+
 #[cfg(feature = "binaries")]
 pub mod binutils;
 
