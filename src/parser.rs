@@ -32,13 +32,14 @@ pub enum GreekItem {
 
 bitflags! {
     pub struct GreekMods: u16 {
-        const SLENIS     = 1 << 0;
-        const SASPER     = 1 << 1;
-        const ACUTE      = 1 << 2;
-        const GRAVE      = 1 << 3;
-        const CIRCUMFLEX = 1 << 4;
-        const IOTASUB    = 1 << 5;
-        const DIAERESIS  = 1 << 6;
+        const SLENIS     = 1 << 0; // '
+        const SASPER     = 1 << 1; // "
+        const ACUTE      = 1 << 2; // `
+        const GRAVE      = 1 << 3; // ~
+        const CIRCUMFLEX = 1 << 4; // ^
+        const IOTASUB    = 1 << 5; // ,
+        const DIAERESIS  = 1 << 6; // :
+        const TERMINAL   = 1 << 15; // to distinguish between normal and terminal sigma
     }
 }
 
@@ -58,22 +59,55 @@ named!(grk_tag<CompleteStr, EntryItem>,
            tag!("<grk>") >>
            items: many1!(grk_item) >>
            tag!("</grk>") >>
-           ( EntryItem::Greek(items) )));
+           ({
+               let mut items = items;
+               {
+                   use parser::GreekItem::{Letter, Other};
+                   let mut iter = items.iter_mut().peekable();
+                   while let Some(gi) = iter.next() {
+                       if let Letter('s', ref mut mods) = *gi {
+                           if let Other(_) = iter.peek().unwrap_or(& &mut Other(' ')) {
+                               *mods |= GreekMods::TERMINAL;
+                           }
+                       }
+                   }
+               }
+               EntryItem::Greek(items)
+           })));
 
 named!(grk_item<CompleteStr, GreekItem>,
        alt!(grk_letter | grk_other));
 
 named!(grk_letter<CompleteStr, GreekItem>,
        do_parse!(
-           _pre: opt!(one_of!("'\"")) >>
-           _alpha: grk_alphabet >>
-           _post: many0!(one_of!("`~^,:")) >>
-           ( unimplemented!() ))); // TODO
+           pre: opt!(one_of!("'\"")) >>
+           base: grk_letter_base >>
+           post: many0!(one_of!("`~^,:")) >>
+           ({
+               let mut mods = GreekMods::empty();
+               match pre {
+                   Some('\'') => mods |= GreekMods::SLENIS,
+                   Some('"') => mods |= GreekMods::SASPER,
+                   Some(_) => unreachable!(),
+                   None => (),
+               }
+               for m in post {
+                   match m {
+                       '`' => mods |= GreekMods::ACUTE,
+                       '~' => mods |= GreekMods::GRAVE,
+                       '^' => mods |= GreekMods::CIRCUMFLEX,
+                       ',' => mods |= GreekMods::IOTASUB,
+                       ':' => mods |= GreekMods::DIAERESIS,
+                       _ => unreachable!(),
+                   }
+               }
+               GreekItem::Letter(base, mods)
+           })));
 
 named!(grk_other<CompleteStr, GreekItem>,
        map!(one_of!(" -"), |c| GreekItem::Other(c)));
 
-named!(grk_alphabet<CompleteStr, char>, one_of!("abcdefghijklmnopqrstvwxyzABCDEFGHIJKLMNOPQRSTWXYZ"));
+named!(grk_letter_base<CompleteStr, char>, one_of!("abcdefghijklmnopqrstvwxyzABCDEFGHIJKLMNOPQRSTWXYZ"));
 
 named!(open_tag<CompleteStr, EntryItem>,
        do_parse!(
@@ -89,7 +123,7 @@ named!(close_tag<CompleteStr, EntryItem>,
 named!(entity<CompleteStr, EntryItem>,
        alt!(map!(tag!("<?/"), |_| EntryItem::EntityUnk) |
             map!(tuple!(tag!("<br/"), opt!(char!('\n'))), |_| EntryItem::EntityBr) |
-            map!(delimited!(tag!("<"), alphanumeric1, tag!("/")), |s| EntryItem::Entity(s.0))));
+            map!(delimited!(tag!("<"), take_while1!(is_entity_char), tag!("/")), |s| EntryItem::Entity(s.0))));
 
 named!(comment<CompleteStr, EntryItem>,
        map!(delimited!(tag!("<--"), take_until!("-->"), tag!("-->")), |s| EntryItem::Comment(s.0)));
@@ -102,6 +136,10 @@ named!(ext_link<CompleteStr, EntryItem>,
            text: is_not!("<>") >>
            tag!("</a>") >>
            ( EntryItem::ExternalLink(url.0, text.0) )));
+
+fn is_entity_char(c: char) -> bool {
+    c.is_digit(36) || c == ':' || c == '_'
+}
 
 pub struct EntryParser<'a> {
     contents: &'a str,

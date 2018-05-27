@@ -1,6 +1,6 @@
 use std::fmt::{self, Display, Formatter};
 
-use parser::{Entry, EntryItem};
+use parser::{Entry, EntryItem, GreekItem, GreekMods};
 
 pub struct CIDE<'a>(pub &'a Entry<'a>);
 pub struct HTML<'a>(pub &'a Entry<'a>);
@@ -46,7 +46,13 @@ impl<'a> DisplayCIDE for EntryItem<'a> {
             EntityBr => write!(f, "<br/\n"),
             EntityUnk => write!(f, "<?/"),
             ExternalLink(url, text) => write!(f, "<a href=\"{}\">{}</a>", url, text),
-            Greek(_) => unimplemented!(), // TODO
+            Greek(ref gitems) => {
+                write!(f, "<grk>")?;
+                for gi in gitems {
+                    gi.fmt_cide(f)?;
+                }
+                write!(f, "</grk>")
+            }
             PlainText(text) => write!(f, "{}", text),
             Tagged { name, ref items, source } => {
                 write_tag_open(f, name, source)?;
@@ -68,6 +74,36 @@ impl<'a> DisplayCIDE for EntryItem<'a> {
                     write!(f, "</{}>", name)
                 }
             }
+        }
+    }
+}
+
+impl DisplayCIDE for GreekItem {
+    fn fmt_cide(&self, f: &mut Formatter) -> fmt::Result {
+        match *self {
+            GreekItem::Letter(base, mods) => {
+                if mods.contains(GreekMods::SLENIS) {
+                    write!(f, "'")?;
+                } else if mods.contains(GreekMods::SASPER) {
+                    write!(f, "\"")?;
+                }
+                write!(f, "{}", base)?;
+                if mods.contains(GreekMods::DIAERESIS) {
+                    write!(f, ":")?;
+                }
+                if mods.contains(GreekMods::ACUTE) {
+                    write!(f, "`")?;
+                } else if mods.contains(GreekMods::GRAVE) {
+                    write!(f, "~")?;
+                } else if mods.contains(GreekMods::CIRCUMFLEX) {
+                    write!(f, "^")?;
+                }
+                if mods.contains(GreekMods::IOTASUB) {
+                    write!(f, ",")?;
+                }
+                Ok(())
+            }
+            GreekItem::Other(c) => write!(f, "{}", c),
         }
     }
 }
@@ -113,7 +149,7 @@ impl<'a> DisplayHTML for EntryItem<'a> {
                             Some(source) => write!(f, "<p data-source=\"{}\">", source)?,
                             None => write!(f, "<p>")?,
                         }
-                        fmt_html(f, items)?;
+                        items.fmt_html(f)?;
                         write!(f, "</p>")
                     }
                     "grk" => unimplemented!(),
@@ -127,11 +163,13 @@ impl<'a> DisplayHTML for EntryItem<'a> {
     }
 }
 
-fn fmt_html(f: &mut Formatter, items: &Vec<EntryItem>) -> fmt::Result {
-    for item in items {
-        item.fmt_cide(f)?;
+impl<'a> DisplayHTML for Vec<EntryItem<'a>> {
+    fn fmt_html(&self, f: &mut Formatter) -> fmt::Result {
+        for item in self {
+            item.fmt_html(f)?;
+        }
+        Ok(())
     }
-    Ok(())
 }
 
 fn entity_to_html(entity: &str) -> &'static str {
