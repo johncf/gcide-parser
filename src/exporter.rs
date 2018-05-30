@@ -5,26 +5,14 @@ use parser::{Entry, EntryItem, GreekItem, GreekMods};
 use unicode_normalization::char::compose as unic_compose;
 
 pub struct CIDE<'a>(pub &'a Entry<'a>);
-pub struct HTML<'a>(pub &'a Entry<'a>);
-//pub struct Plain<'a>(pub &'a Entry<'a>);
 
 trait DisplayCIDE {
     fn fmt_cide(&self, f: &mut Formatter) -> fmt::Result;
 }
 
-trait DisplayHTML {
-    fn fmt_html(&self, f: &mut Formatter) -> fmt::Result;
-}
-
 impl<'a> Display for CIDE<'a> {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         self.0.fmt_cide(f)
-    }
-}
-
-impl<'a> Display for HTML<'a> {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        self.0.fmt_html(f)
     }
 }
 
@@ -123,112 +111,45 @@ fn write_tag_open(f: &mut Formatter, name: &str, source: Option<&str>) -> fmt::R
     }
 }
 
-impl<'a> DisplayHTML for Entry<'a> {
-    fn fmt_html(&self, f: &mut Formatter) -> fmt::Result {
-        write!(f, "<div class=\"entry\" data-word=\"{}\" data-source=\"{}\">", self.main_word, self.source)?;
-        for item in &self.items {
-            item.fmt_html(f)?;
-        }
-        write!(f, "</div>")
-    }
-}
-
-impl<'a> DisplayHTML for EntryItem<'a> {
-    fn fmt_html(&self, f: &mut Formatter) -> fmt::Result {
+impl<'a> Display for EntryItem<'a> {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         use parser::EntryItem::*;
+        use std::fmt::Write;
         match *self {
-            Comment(_) => Ok(()),
-            Entity(name) => write!(f, "{}", entity_to_html(name)),
-            EntityBr => write!(f, "<br/>\n"),
-            EntityUnk => write!(f, "&#xfffd;"),
-            ExternalLink(url, text) => write!(f, "<a class=\"extern\" href=\"{}\">{}</a>", url, text),
+            Entity(name) => f.write_str(entity_to_unicode(name)),
+            EntityBr => f.write_char('\n'),
+            EntityUnk => f.write_char('\u{fffd}'),
+            ExternalLink(_, text) => f.write_str(text),
             Greek(ref gitems) => {
-                write!(f, "<span class=\"greek\">")?;
                 for gi in gitems {
-                    gi.fmt_html(f)?;
+                    gi.fmt(f)?;
                 }
-                write!(f, "</span>")
+                Ok(())
             }
-            PlainText(text) => write!(f, "{}", text.replace("&", "&amp;")), // TODO dashes, single quotes
-            Tagged { name, ref items, source } => {
-                match name {
-                    "p" => {
-                        match source {
-                            Some(source) => write!(f, "<p data-source=\"{}\">", source)?,
-                            None => write!(f, "<p>")?,
-                        }
-                        items.fmt_html(f)?;
-                        write!(f, "</p>")
-                    }
-                    "hw" => {
-                        write!(f, "<strong class=\"hw\">")?;
-                        items.fmt_html(f)?;
-                        write!(f, "</strong>")
-                    }
-                    "ety" | "ets" | "etsep" | "pr" | "def" | "altname" | "col" | "cd" | "plain"
-                        | "fld" | "mark" | "sd" | "sn" | "au" | "ecol" | "stype" => {
-                        write!(f, "<span class=\"{}\">", name)?;
-                        items.fmt_html(f)?;
-                        write!(f, "</span>")
-                    }
-                    "pos" | "pluf" | "singf" => {
-                        write!(f, "<em>")?;
-                        items.fmt_html(f)?;
-                        write!(f, "</em>")
-                    }
-                    "asp" | "adjf" | "conjf" | "decf" | "plw" | "singw" | "wf" => {
-                        write!(f, "<strong class=\"altf\">")?;
-                        items.fmt_html(f)?;
-                        write!(f, "</strong>")
-                    }
-                    "er" | "snr" | "sdr" | "cref" => {
-                        write!(f, "<a href=\"#\" class=\"{}\">", name)?;
-                        items.fmt_html(f)?;
-                        write!(f, "</a>")
-                    }
-                    "as" | "def2" | "altsp" | "cs" | "mcol" | "mhw" | "note" | "syn" | "usage"
-                        | "mord" | "rj" | "specif" | "book" | "org" | "city" | "country" | "geog"
-                        | "plu" | "sing" | "amorph" | "nmorph" | "vmorph" | "wordforms" => {
-                        items.fmt_html(f)
-                    }
-                    "oneof" | "c" => { // TODO
-                        items.fmt_html(f)
-                    }
-                    "q" | "qau" => { // TODO use blockquote
-                        items.fmt_html(f)
-                    }
-                    "class" | "fam" | "gen" | "ord" | "spn" | "ex" | "qex" | "xex" | "it" => {
-                        write!(f, "<em>")?;
-                        items.fmt_html(f)?;
-                        write!(f, "</em>")
-                    }
-                    _ => {
-                        eprintln!("unknown tag: {}", name);
-                        write!(f, "&#xfffd;<!--{}-->", name)
-                    }
-
+            PlainText(text) => f.write_str(&process_symbols_in_text(text)),
+            Tagged { ref items, .. } => {
+                for item in items {
+                    item.fmt(f)?;
                 }
+                Ok(())
             }
-            UnpairedTagOpen(_, _) => Ok(()),
-            UnpairedTagClose(_) => Ok(()),
+            _ => Ok(()),
         }
     }
 }
 
-impl<'a> DisplayHTML for Vec<EntryItem<'a>> {
-    fn fmt_html(&self, f: &mut Formatter) -> fmt::Result {
-        for item in self {
-            item.fmt_html(f)?;
-        }
-        Ok(())
-    }
+pub fn process_symbols_in_text(text: &str) -> String {
+    text.replace("'", "\u{2019}")
+        .replace("----", "\u{23af}\u{23af}\u{23af}")
+        .replace("--", entity_to_unicode("mdash"))
 }
 
-impl DisplayHTML for GreekItem {
-    fn fmt_html(&self, f: &mut Formatter) -> fmt::Result {
+impl Display for GreekItem {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        use std::fmt::Write;
         match *self {
             GreekItem::Letter(base, mods) => {
-                let mut letter = Some(grk_to_unicode(base, mods.contains(GreekMods::TERMINAL)));
+                let mut letter = Some(grktrans_to_unicode(base, mods.contains(GreekMods::TERMINAL)));
                 let compose = |l_opt: Option<char>, m| l_opt.and_then(|l| unic_compose(l, m));
                 if mods.contains(GreekMods::SLENIS) {
                     letter = compose(letter, '\u{0313}');
@@ -249,40 +170,27 @@ impl DisplayHTML for GreekItem {
                     letter = compose(letter, '\u{0345}');
                 }
                 match letter {
-                    Some(letter) => write!(f, "{}", letter),
-                    None => { // TODO fallback to combining characters
-                        eprintln!("composing greek letter failed: {} {:b}", base, mods);
-                        write!(f, "\u{fffd}")
+                    Some(c) => f.write_char(c),
+                    None => {
+                        eprintln!("possibly bad greek letter: {} {:b}", base, mods);
+                        f.write_char('\u{fffd}')
                     }
                 }
             }
-            GreekItem::Other(c) => write!(f, "{}", c),
+            GreekItem::Other(c) => f.write_char(c),
         }
     }
 }
 
-fn entity_to_html(entity: &str) -> &'static str {
-    match entity {
-        "lt"       => "&lt;",
-        "gt"       => "&gt;",
-        "aring"    => "&aring;",
-        "atil"     => "&atilde;",
-        "ntil"     => "&ntilde;",
-        "edh"      => "&eth;",
-        "thorn"    => "&thorn;",
-        "rarr"     => "&rarr;",
-        "root"     => "&radic;",
-        "acute"    => "&acute;",
-        "cflex"    => "&circ;",
-        "srtil"    => "&tilde;",
-        _          => entity_to_unicode(entity),
-    }
-}
-
-fn entity_to_unicode(entity: &str) -> &'static str {
+pub fn entity_to_unicode(entity: &str) -> &'static str {
     match entity {
         "lt"       => "<",
         "gt"       => ">",
+        "ait"     => "a",
+        "eit"     => "e",
+        "iit"     => "i",
+        "oit"     => "o",
+        "uit"     => "u",
         "ae"       => "\u{00e6}",
         "AE"       => "\u{00c6}",
         "oe"       => "\u{0153}",
@@ -329,6 +237,7 @@ fn entity_to_unicode(entity: &str) -> &'static str {
         "icr"      => "\u{012d}",
         "ocr"      => "\u{014f}",
         "ucr"      => "\u{016d}",
+        "ycr"      => "y\u{0306}",
         "oocr"     => "o\u{035d}o",
         "ocar"     => "\u{01d2}",
         "asl"      => "a\u{0304}\u{0307}",
@@ -424,8 +333,9 @@ fn entity_to_unicode(entity: &str) -> &'static str {
     }
 }
 
-fn grk_to_unicode(c: char, is_terminal: bool) -> char {
-    match c {
+/// Transcribed Greek in ASCII (per GCIDE spec) to Unicode Greek character.
+pub fn grktrans_to_unicode(trans: char, is_terminal: bool) -> char {
+    match trans {
         'a' => '\u{03b1}', 'b' => '\u{03b2}',
         'g' => '\u{03b3}', 'd' => '\u{03b4}',
         'e' => '\u{03b5}', 'z' => '\u{03b6}',

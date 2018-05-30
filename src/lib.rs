@@ -16,5 +16,5 @@ pub mod binutils;
 pub mod parser;
 pub mod exporter;
 
-pub use parser::EntryParser;
+pub use parser::{Entry, EntryParser};
 pub use exporter::CIDE;
