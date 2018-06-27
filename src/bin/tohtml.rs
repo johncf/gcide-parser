@@ -38,24 +38,24 @@ fn conv_html(contents: &str) -> String {
 
 impl<'a> Display for HTML<'a> {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        self.0.fmt_html(f)
+        self.0.fmt_html(f, None)
     }
 }
 
 trait DisplayHTML {
-    fn fmt_html(&self, f: &mut Formatter) -> fmt::Result;
+    fn fmt_html(&self, f: &mut Formatter, ctx_tag: Option<&str>) -> fmt::Result;
 }
 
 impl<'a> DisplayHTML for Entry<'a> {
-    fn fmt_html(&self, f: &mut Formatter) -> fmt::Result {
+    fn fmt_html(&self, f: &mut Formatter, ctx_tag: Option<&str>) -> fmt::Result {
         write!(f, "<div class=\"entry\" data-word=\"{}\" data-source=\"{}\">", self.main_word, self.source)?;
-        self.items.fmt_html(f)?;
+        self.items.fmt_html(f, ctx_tag)?;
         write!(f, "</div>")
     }
 }
 
 impl<'a> DisplayHTML for EntryItem<'a> {
-    fn fmt_html(&self, f: &mut Formatter) -> fmt::Result {
+    fn fmt_html(&self, f: &mut Formatter, ctx_tag: Option<&str>) -> fmt::Result {
         use gcide::parser::EntryItem::*;
         use gcide::exporter::process_symbols_in_text;
         match *self {
@@ -71,7 +71,11 @@ impl<'a> DisplayHTML for EntryItem<'a> {
                 }
                 write!(f, "</em>")
             }
-            PlainText(text) => write!(f, "{}", process_symbols_in_text(text).replace("&", "&amp;")),
+            PlainText(text) => if let Some("pre") = ctx_tag {
+                write!(f, "{}", text.replace("&", "&amp;"))
+            } else {
+                write!(f, "{}", process_symbols_in_text(text).replace("&", "&amp;"))
+            },
             Tagged { name, ref items, source } => {
                 match name {
                     "p" => {
@@ -79,50 +83,47 @@ impl<'a> DisplayHTML for EntryItem<'a> {
                             Some(source) => write!(f, "<p data-source=\"{}\">", source)?,
                             None => write!(f, "<p>")?,
                         }
-                        items.fmt_html(f)?;
+                        items.fmt_html(f, Some(name))?;
                         write!(f, "</p>")
                     }
                     "hw" => {
-                        write!(f, "<strong class=\"hw\">")?;
-                        items.fmt_html(f)?;
-                        write!(f, "</strong>")
+                        fmt_tag(f, "strong", Some(name), items, Some(name))
                     }
                     "ety" | "ets" | "etsep" | "pr" | "def" | "altname" | "col" | "cd" | "plain"
                         | "fld" | "mark" | "sd" | "sn" | "au" | "ecol" | "stype" => {
-                        write!(f, "<span class=\"{}\">", name)?;
-                        items.fmt_html(f)?;
-                        write!(f, "</span>")
+                        fmt_tag(f, "span", Some(name), items, Some(name))
                     }
                     "pos" | "pluf" | "singf" => {
-                        write!(f, "<em>")?;
-                        items.fmt_html(f)?;
-                        write!(f, "</em>")
+                        fmt_tag(f, "em", None, items, Some(name))
                     }
                     "asp" | "adjf" | "conjf" | "decf" | "plw" | "singw" | "wf" => {
-                        write!(f, "<strong class=\"altf\">")?;
-                        items.fmt_html(f)?;
-                        write!(f, "</strong>")
+                        fmt_tag(f, "strong", Some("altf"), items, Some(name))
                     }
                     "er" | "snr" | "sdr" | "cref" => {
-                        write!(f, "<a href=\"#\" class=\"{}\">", name)?;
-                        items.fmt_html(f)?;
+                        write!(f, "<a class=\"{}\" href=\"#\">", name)?;
+                        items.fmt_html(f, Some(name))?;
                         write!(f, "</a>")
                     }
                     "as" | "def2" | "altsp" | "cs" | "mcol" | "mhw" | "note" | "syn" | "usage"
                         | "mord" | "rj" | "specif" | "book" | "org" | "city" | "country" | "geog"
                         | "plu" | "sing" | "amorph" | "nmorph" | "vmorph" | "wordforms" => {
-                        items.fmt_html(f)
+                        items.fmt_html(f, Some(name))
                     }
-                    "oneof" | "c" => { // TODO
-                        items.fmt_html(f)
+                    "oneof" => { // TODO handle those without <c> tags
+                        for item in items {
+                            if let Tagged { name: "c", items: ref children, .. } = item {
+                                children.fmt_html(f, ctx_tag)?;
+                            } else {
+                                item.fmt_html(f, Some("plain"))?;
+                            }
+                        }
+                        Ok(())
                     }
                     "q" | "qau" => { // TODO use blockquote
-                        items.fmt_html(f)
+                        items.fmt_html(f, Some(name))
                     }
-                    "class" | "fam" | "gen" | "ord" | "spn" | "ex" | "qex" | "xex" | "it" => {
-                        write!(f, "<em>")?;
-                        items.fmt_html(f)?;
-                        write!(f, "</em>")
+                    "class" | "fam" | "gen" | "ord" | "spn" | "ex" | "qex" | "xex" | "it" | "sig" => {
+                        fmt_tag(f, "em", None, items, Some(name))
                     }
                     _ => {
                         eprintln!("unknown tag: {}", name);
@@ -137,12 +138,26 @@ impl<'a> DisplayHTML for EntryItem<'a> {
 }
 
 impl<'a> DisplayHTML for Vec<EntryItem<'a>> {
-    fn fmt_html(&self, f: &mut Formatter) -> fmt::Result {
+    fn fmt_html(&self, f: &mut Formatter, ctx_tag: Option<&str>) -> fmt::Result {
         for item in self {
-            item.fmt_html(f)?;
+            item.fmt_html(f, ctx_tag)?;
         }
         Ok(())
     }
+}
+
+fn fmt_tag(f: &mut Formatter,
+           tagname: &str,
+           class: Option<&str>,
+           items: &Vec<EntryItem>,
+           ctx_tag: Option<&str>) -> fmt::Result {
+    if let Some(class) = class {
+        write!(f, "<{} class=\"{}\">", tagname, class)?;
+    } else {
+        write!(f, "<{}>", tagname)?;
+    }
+    items.fmt_html(f, ctx_tag)?;
+    write!(f, "</{}>", tagname)
 }
 
 fn entity_to_html(entity: &str) -> &'static str {
@@ -150,11 +165,11 @@ fn entity_to_html(entity: &str) -> &'static str {
     match entity {
         "lt"       => "&lt;",
         "gt"       => "&gt;",
-        "ait"     => "<i>a</i>",
-        "eit"     => "<i>e</i>",
-        "iit"     => "<i>i</i>",
-        "oit"     => "<i>o</i>",
-        "uit"     => "<i>u</i>",
+        "ait"      => "<i>a</i>",
+        "eit"      => "<i>e</i>",
+        "iit"      => "<i>i</i>",
+        "oit"      => "<i>o</i>",
+        "uit"      => "<i>u</i>",
         _          => entity_to_unicode(entity),
     }
 }
